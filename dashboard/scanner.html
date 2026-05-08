@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Agent Scanner — ACP-SEC</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <style>
+    /* ── Design tokens (mirrors acp-sec-dashboard.html) ───────────────────── */
+    :root {
+      --bg-primary:    #f7f6f1;
+      --bg-secondary:  #ffffff;
+      --bg-tertiary:   #f0ede6;
+      --border:        #ddd9cf;
+      --border-light:  #ece9e1;
+      --text-primary:  #1a1a18;
+      --text-secondary:#4a4a46;
+      --text-tertiary: #7a7a74;
+      --accent-purple: #7f77dd;
+      --accent-success:#22c55e;
+      --accent-danger: #ef4444;
+      --accent-amber:  #f59e0b;
+      --accent-info:   #3b82f6;
+      --shadow:        0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+    }
+    body.dark-mode {
+      --bg-primary:    #141412;
+      --bg-secondary:  #1c1c1a;
+      --bg-tertiary:   #242420;
+      --border:        #333330;
+      --border-light:  #2a2a27;
+      --text-primary:  #e8e6dc;
+      --text-secondary:#a8a5a0;
+      --text-tertiary: #6a6a64;
+      --shadow:        0 1px 3px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────────── */
+    .header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.5rem;
+    }
+    .header-content {
+      max-width: 960px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -.01em;
+    }
+    .logo-icon { font-size: 1.35rem; }
+    .logo-sub  { font-size: 0.7rem; color: var(--text-tertiary); font-weight: 400; }
+    .badge-scanner {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      background: rgba(127,119,221,.15);
+      color: var(--accent-purple);
+      letter-spacing: .05em;
+    }
+    .header-actions { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
+
+    /* ── Buttons ────────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.45rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background .15s, color .15s, border-color .15s;
+      text-decoration: none;
+    }
+    .btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+    .btn-primary {
+      background: var(--accent-purple);
+      border-color: var(--accent-purple);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #6a62c8; border-color: #6a62c8; color: #fff; }
+    .btn-primary:disabled { background: var(--bg-tertiary); border-color: var(--border); color: var(--text-tertiary); cursor: not-allowed; }
+    .btn.loading { opacity: .7; cursor: wait; }
+    .theme-toggle {
+      width: 32px; height: 32px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg-secondary);
+      cursor: pointer;
+      font-size: 1rem;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .theme-toggle::after { content: '☀️'; }
+    .dark-mode .theme-toggle::after { content: '🌙'; }
+
+    /* ── Layout ─────────────────────────────────────────────────────────────── */
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .page-hero {
+      text-align: center;
+      padding: 2.5rem 1rem 1.5rem;
+    }
+    .page-hero h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -.03em;
+      margin-bottom: 0.5rem;
+    }
+    .page-hero p {
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+    .hero-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      background: rgba(245,158,11,.15);
+      color: var(--accent-amber);
+      letter-spacing: .05em;
+      margin-bottom: 0.8rem;
+    }
+
+    /* ── Step indicators ────────────────────────────────────────────────────── */
+    .steps {
+      display: flex;
+      justify-content: center;
+      gap: 0;
+      margin: 0 auto;
+      max-width: 480px;
+    }
+    .step-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.3rem;
+      flex: 1;
+      position: relative;
+      color: var(--text-tertiary);
+      font-size: 0.72rem;
+      font-weight: 500;
+    }
+    .step-item::before {
+      content: '';
+      position: absolute;
+      top: 14px; left: -50%; right: 50%;
+      height: 2px;
+      background: var(--border);
+    }
+    .step-item:first-child::before { display: none; }
+    .step-item.active::before,
+    .step-item.done::before { background: var(--accent-purple); }
+    .step-num {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--bg-tertiary);
+      border: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      position: relative;
+      z-index: 1;
+    }
+    .step-item.active .step-num {
+      background: var(--accent-purple);
+      border-color: var(--accent-purple);
+      color: #fff;
+    }
+    .step-item.done .step-num {
+      background: var(--accent-success);
+      border-color: var(--accent-success);
+      color: #fff;
+    }
+    .step-item.done .step-num::after { content: '✓'; }
+    .step-item.active .step-label,
+    .step-item.done  .step-label { color: var(--text-primary); }
+
+    /* ── Cards ──────────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+    .card-title {
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 0.2rem;
+    }
+    .card-sub {
+      font-size: 0.78rem;
+      color: var(--text-tertiary);
+      margin-bottom: 1.2rem;
+    }
+
+    /* ── Form ───────────────────────────────────────────────────────────────── */
+    .field-group { display: flex; flex-direction: column; gap: 0.35rem; }
+    .field-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+    .field-hint { font-size: 0.72rem; color: var(--text-tertiary); }
+    .text-input {
+      width: 100%;
+      padding: 0.65rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 0.92rem;
+      font-family: inherit;
+      transition: border-color .15s;
+      outline: none;
+    }
+    .text-input:focus { border-color: var(--accent-purple); }
+    .text-input::placeholder { color: var(--text-tertiary); }
+    .text-input:read-only {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.6rem;
+      align-items: end;
+    }
+
+    /* ── Profile preview card ────────────────────────────────────────────────── */
+    .profile-card {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .profile-avatar {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: var(--bg-tertiary);
+      border: 2px solid var(--border);
+      object-fit: cover;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem;
+      color: var(--text-tertiary);
+    }
+    .profile-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+    .profile-info { flex: 1; min-width: 0; }
+    .profile-display-name {
+      font-weight: 700;
+      font-size: 1.05rem;
+      display: flex; align-items: center; gap: 0.4rem;
+    }
+    .profile-username { font-size: 0.82rem; color: var(--text-tertiary); }
+    .profile-bio {
+      margin-top: 0.35rem;
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .profile-link {
+      margin-top: 0.35rem;
+      font-size: 0.8rem;
+      color: var(--accent-purple);
+      word-break: break-all;
+    }
+
+    /* ── Notice banners ─────────────────────────────────────────────────────── */
+    .notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      padding: 0.7rem 0.9rem;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      line-height: 1.5;
+    }
+    .notice.warn {
+      background: rgba(245,158,11,.1);
+      border: 1px solid rgba(245,158,11,.3);
+      color: var(--text-secondary);
+    }
+    .notice.info {
+      background: rgba(59,130,246,.08);
+      border: 1px solid rgba(59,130,246,.25);
+      color: var(--text-secondary);
+    }
+    .notice.error {
+      background: rgba(239,68,68,.08);
+      border: 1px solid rgba(239,68,68,.25);
+      color: var(--accent-danger);
+    }
+    .notice-icon { font-size: 1rem; flex-shrink: 0; margin-top: .05rem; }
+
+    /* ── Scan results ────────────────────────────────────────────────────────── */
+    .results-hero {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 2rem;
+      align-items: center;
+    }
+    .score-ring-wrap {
+      position: relative;
+      width: 200px; height: 200px;
+    }
+    .ring-svg {
+      width: 100%; height: 100%;
+      transform: rotate(-90deg);
+    }
+    .ring-track { fill: none; stroke: var(--bg-tertiary); stroke-width: 12; }
+    .ring-progress {
+      fill: none;
+      stroke: var(--accent-purple);
+      stroke-width: 12;
+      stroke-linecap: round;
+      stroke-dasharray: 603.19;
+      stroke-dashoffset: 603.19;
+      transition: stroke-dashoffset 1.2s cubic-bezier(.4,0,.2,1), stroke .4s;
+    }
+    .ring-center {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.2rem;
+    }
+    .score-number { font-size: 3rem; font-weight: 800; letter-spacing: -.05em; line-height: 1; }
+    .score-label  { font-size: 0.68rem; color: var(--text-tertiary); font-weight: 500; }
+    .score-meta { display: flex; flex-direction: column; gap: 0.75rem; }
+    .score-agent  { font-size: 1.3rem; font-weight: 700; }
+    .score-handle { font-size: 0.84rem; color: var(--text-tertiary); }
+    .score-band   {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+    }
+    .score-band.SECURE      { background: rgba(34,197,94,.15);  color: #16a34a; }
+    .score-band.HARDENED    { background: rgba(34,197,94,.10);  color: #22c55e; }
+    .score-band.VULNERABLE  { background: rgba(245,158,11,.15); color: #d97706; }
+    .score-band.CRITICAL    { background: rgba(239,68,68,.15);  color: #dc2626; }
+    .score-band.COMPROMISED { background: rgba(239,68,68,.20);  color: #dc2626; }
+    .score-verdict { font-size: 0.84rem; color: var(--text-secondary); font-style: italic; }
+    .score-url     { font-size: 0.76rem; color: var(--text-tertiary); word-break: break-all; }
+
+    /* ── Metrics strip ───────────────────────────────────────────────────────── */
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+    }
+    .metric-box {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 0.9rem;
+      text-align: center;
+    }
+    .metric-val  { font-size: 1.5rem; font-weight: 800; line-height: 1; }
+    .metric-lbl  { font-size: 0.68rem; color: var(--text-tertiary); margin-top: 0.2rem; }
+
+    /* ── Security headers strip ──────────────────────────────────────────────── */
+    .hdr-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .hdr-pill {
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid;
+    }
+    .hdr-pill.present {
+      background: rgba(34,197,94,.1);
+      border-color: rgba(34,197,94,.3);
+      color: #16a34a;
+    }
+    .hdr-pill.missing {
+      background: var(--bg-tertiary);
+      border-color: var(--border);
+      color: var(--text-tertiary);
+      text-decoration: line-through;
+      opacity: .65;
+    }
+
+    /* ── Dimension accordion ─────────────────────────────────────────────────── */
+    .dim-block {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .dim-header {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      padding: 0.8rem 1rem;
+      background: var(--bg-tertiary);
+      cursor: pointer;
+      user-select: none;
+    }
+    .dim-header:hover { background: var(--border-light); }
+    .dim-pill {
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 0.2rem 0.45rem;
+      border-radius: 4px;
+      background: var(--accent-purple);
+      color: #fff;
+      letter-spacing: .05em;
+    }
+    .dim-name  { font-weight: 600; font-size: 0.88rem; flex: 1; }
+    .dim-score-bar-wrap { display: flex; align-items: center; gap: 0.5rem; }
+    .dim-score-bar {
+      width: 80px; height: 5px;
+      background: var(--bg-primary);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .dim-score-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width .8s ease;
+    }
+    .dim-score-val { font-size: 0.78rem; font-weight: 700; min-width: 50px; text-align: right; }
+    .dim-chevron { font-size: 0.7rem; color: var(--text-tertiary); transition: transform .2s; }
+    .dim-block.open .dim-chevron { transform: rotate(90deg); }
+
+    .dim-checks { display: none; }
+    .dim-block.open .dim-checks { display: block; }
+
+    /* ── Check row ───────────────────────────────────────────────────────────── */
+    .check-row {
+      display: grid;
+      grid-template-columns: 90px 1fr auto auto;
+      align-items: start;
+      gap: 0.6rem;
+      padding: 0.7rem 1rem;
+      border-top: 1px solid var(--border-light);
+    }
+    .check-id-col { display: flex; flex-direction: column; gap: 0.25rem; }
+    .check-id {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      border: 1px solid currentColor;
+      display: inline-block;
+    }
+    .check-id.critical { color: #ef4444; border-color: rgba(239,68,68,.3); background: rgba(239,68,68,.07); }
+    .check-id.high     { color: #f97316; border-color: rgba(249,115,22,.3); background: rgba(249,115,22,.07); }
+    .check-id.medium   { color: #f59e0b; border-color: rgba(245,158,11,.3); background: rgba(245,158,11,.07); }
+    .check-id.low      { color: #6366f1; border-color: rgba(99,102,241,.3); background: rgba(99,102,241,.07); }
+
+    .status-badge {
+      font-size: 0.62rem;
+      font-weight: 700;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      letter-spacing: .04em;
+      display: inline-block;
+    }
+    .status-badge.pass  { background: rgba(34,197,94,.15);  color: #16a34a; }
+    .status-badge.warn  { background: rgba(245,158,11,.15); color: #d97706; }
+    .status-badge.fail  { background: rgba(239,68,68,.12);  color: #dc2626; }
+
+    .check-name-col { display: flex; flex-direction: column; gap: 0.2rem; }
+    .check-name { font-size: 0.86rem; font-weight: 600; }
+    .check-finding {
+      font-size: 0.75rem;
+      color: var(--text-tertiary);
+      line-height: 1.45;
+    }
+    .check-recs { margin-top: 0.4rem; }
+    .check-rec {
+      font-size: 0.73rem;
+      color: var(--text-secondary);
+      padding: 0.15rem 0;
+      display: flex;
+      gap: 0.35rem;
+      align-items: baseline;
+    }
+    .check-rec::before { content: '→'; color: var(--accent-purple); flex-shrink: 0; }
+
+    .check-score-col {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-align: right;
+      white-space: nowrap;
+      padding-top: 0.15rem;
+    }
+    .check-bar-col { width: 55px; padding-top: 0.4rem; }
+    .check-bar { height: 4px; background: var(--bg-tertiary); border-radius: 99px; overflow: hidden; }
+    .check-bar-fill { height: 100%; border-radius: 99px; transition: width .6s ease; }
+    .check-bar-fill.green { background: var(--accent-success); }
+    .check-bar-fill.amber { background: var(--accent-amber); }
+    .check-bar-fill.red   { background: var(--accent-danger); }
+
+    /* ── Inferred-score disclaimer ───────────────────────────────────────────── */
+    .inferred-note {
+      font-size: 0.74rem;
+      color: var(--text-tertiary);
+      text-align: center;
+      padding: 0.5rem 1rem;
+      border-top: 1px solid var(--border-light);
+    }
+
+    /* ── Toast ───────────────────────────────────────────────────────────────── */
+    .toast-container {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      display: flex; flex-direction: column; gap: 0.5rem;
+      z-index: 9999;
+    }
+    .toast {
+      padding: 0.6rem 1rem;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      box-shadow: 0 4px 16px rgba(0,0,0,.18);
+      animation: toastIn .25s ease;
+      max-width: 340px;
+    }
+    @keyframes toastIn { from { opacity:0; transform: translateY(8px); } }
+    .toast.success { background: #1a3a2a; color: #4ade80; border: 1px solid #166534; }
+    .toast.error   { background: #3a1a1a; color: #f87171; border: 1px solid #991b1b; }
+    .toast.info    { background: #1a2a3a; color: #93c5fd; border: 1px solid #1e3a5f; }
+
+    /* ── Spinner ─────────────────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(127,119,221,.3);
+      border-top-color: var(--accent-purple);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-overlay {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+    }
+
+    /* ── Divider ─────────────────────────────────────────────────────────────── */
+    .divider { height: 1px; background: var(--border-light); margin: 0.5rem 0; }
+
+    /* ── Radar chart ─────────────────────────────────────────────────────────── */
+    .radar-wrap { height: 260px; position: relative; }
+
+    /* ── Responsive ──────────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .container { padding: 1rem; }
+      .results-hero { grid-template-columns: 1fr; justify-items: center; }
+      .score-ring-wrap { width: 160px; height: 160px; }
+      .metrics-strip { grid-template-columns: 1fr 1fr; }
+      .check-row { grid-template-columns: 80px 1fr; }
+      .check-score-col, .check-bar-col { grid-column: 2; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ────────────────────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="header-content">
+    <div class="logo">
+      <div class="logo-icon">🔒</div>
+      <div>
+        ACP-SEC
+        <div class="logo-sub">Agent Commerce Security</div>
+      </div>
+    </div>
+    <span class="badge-scanner">AGENT SCANNER</span>
+
+    <div class="header-actions">
+      <a class="btn" href="/">← Dashboard</a>
+      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main ──────────────────────────────────────────────────────────────────── -->
+<div class="container">
+
+  <!-- Hero -->
+  <div class="page-hero">
+    <div class="hero-badge">MVP · v0.1</div>
+    <h1>Agent Scanner</h1>
+    <p>Enter an X @username of an AI agent. We'll look up its profile, find its website, and run a heuristic ACP-SEC security analysis.</p>
+  </div>
+
+  <!-- Step indicators -->
+  <div class="steps" id="stepIndicators">
+    <div class="step-item active" id="stepItem1">
+      <div class="step-num">1</div>
+      <div class="step-label">Lookup</div>
+    </div>
+    <div class="step-item" id="stepItem2">
+      <div class="step-num">2</div>
+      <div class="step-label">Confirm</div>
+    </div>
+    <div class="step-item" id="stepItem3">
+      <div class="step-num">3</div>
+      <div class="step-label">Results</div>
+    </div>
+  </div>
+
+  <!-- ── Step 1: Username input ────────────────────────────────────────────── -->
+  <div class="card" id="step1Card">
+    <div class="card-title">🔍 Look up an Agent</div>
+    <div class="card-sub">Enter the X (Twitter) username of the AI agent you want to scan.</div>
+
+    <div class="field-group">
+      <label class="field-label" for="usernameInput">X Username</label>
+      <div class="form-row">
+        <input type="text" id="usernameInput" class="text-input"
+               placeholder="@agentname  or  agentname"
+               autocomplete="off" autocorrect="off" autocapitalize="off"
+               onkeydown="if(event.key==='Enter') lookupProfile()"/>
+        <button class="btn btn-primary" id="lookupBtn" onclick="lookupProfile()">
+          Look up →
+        </button>
+      </div>
+      <div class="field-hint">Example: @bankrbot, @virtuals_io, @aixbt_agent</div>
+    </div>
+  </div>
+
+  <!-- ── Step 2: Profile preview + URL confirmation ────────────────────────── -->
+  <div class="card" id="step2Card" style="display:none">
+    <div class="card-title">✅ Confirm Agent Details</div>
+    <div class="card-sub">Review the scraped profile info and confirm the website URL to scan.</div>
+
+    <!-- Profile preview -->
+    <div id="profilePreview" class="profile-card" style="margin-bottom:1.2rem">
+      <div class="profile-avatar" id="avatarWrap">🤖</div>
+      <div class="profile-info">
+        <div class="profile-display-name" id="profileDisplayName">—</div>
+        <div class="profile-username" id="profileUsername">@—</div>
+        <div class="profile-bio" id="profileBio"></div>
+        <div class="profile-link" id="profileLink" style="display:none"></div>
+      </div>
+    </div>
+
+    <div id="scrapeWarning" style="display:none;margin-bottom:1rem"></div>
+
+    <div class="divider"></div>
+    <div style="height:1rem"></div>
+
+    <!-- Editable agent name + URL -->
+    <div style="display:flex;flex-direction:column;gap:1rem">
+      <div class="field-group">
+        <label class="field-label" for="agentNameInput">Agent Name</label>
+        <input type="text" id="agentNameInput" class="text-input"
+               placeholder="Display name for the agent"/>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="targetUrlInput">Website URL to Scan</label>
+        <input type="text" id="targetUrlInput" class="text-input"
+               placeholder="https://agent-website.com"
+               onkeydown="if(event.key==='Enter') startScan()"/>
+        <div class="field-hint">
+          Paste the agent's website, landing page, or docs URL. We'll scrape it for security signals.
+        </div>
+      </div>
+
+      <div class="notice info">
+        <span class="notice-icon">ℹ️</span>
+        <span>
+          The scan analyzes publicly visible content and HTTP headers to infer
+          security posture. It does <strong>not</strong> run live agent probes —
+          for that, use <code>acpsec check</code> with an API key.
+        </span>
+      </div>
+
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;flex-wrap:wrap">
+        <button class="btn" onclick="backToStep1()">← Change username</button>
+        <button class="btn btn-primary" id="scanBtn" onclick="startScan()">
+          🔬 Scan Agent
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Step 3: Results ────────────────────────────────────────────────────── -->
+  <div id="step3Container" style="display:none">
+
+    <!-- Score hero -->
+    <div class="card" id="resultsHeroCard">
+      <div class="results-hero">
+        <!-- Score ring -->
+        <div class="score-ring-wrap">
+          <svg class="ring-svg" viewBox="0 0 220 220" aria-hidden="true">
+            <circle class="ring-track"    cx="110" cy="110" r="96"/>
+            <circle class="ring-progress" cx="110" cy="110" r="96" id="ringProgress"/>
+          </svg>
+          <div class="ring-center">
+            <span class="score-number" id="resScore">0</span>
+            <span class="score-label">/ 100</span>
+          </div>
+        </div>
+        <!-- Text meta -->
+        <div class="score-meta">
+          <div>
+            <div class="score-agent" id="resAgentName">—</div>
+            <div class="score-handle" id="resHandle"></div>
+          </div>
+          <div class="score-band" id="resBand">—</div>
+          <div class="score-verdict" id="resVerdict"></div>
+          <div class="score-url" id="resScanUrl"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics strip -->
+    <div class="metrics-strip">
+      <div class="metric-box">
+        <div class="metric-val" id="metricScore" style="color:var(--accent-purple)">—</div>
+        <div class="metric-lbl">Final Score</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-val" id="metricCritFails" style="color:var(--accent-danger)">—</div>
+        <div class="metric-lbl">Critical Fails</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-val" id="metricSecHdrs" style="color:var(--accent-info)">—</div>
+        <div class="metric-lbl">Security Headers</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-val" id="metricChecks" style="color:var(--text-secondary)">30</div>
+        <div class="metric-lbl">Checks Run</div>
+      </div>
+    </div>
+
+    <!-- Security headers -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom:.8rem">HTTP Security Headers</div>
+      <div class="hdr-strip" id="secHdrStrip">—</div>
+    </div>
+
+    <!-- Radar chart -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom:.8rem">Score Radar</div>
+      <div class="radar-wrap">
+        <canvas id="radarChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Dimension breakdown -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom:0.2rem">Detailed Findings</div>
+      <div class="card-sub" style="margin-bottom:1rem">
+        Click a dimension to expand checks · Scores are <em>inferred</em> from public content
+      </div>
+      <div id="dimAccordion" style="display:flex;flex-direction:column;gap:0.5rem"></div>
+      <div class="inferred-note">
+        ⚠ Scores are heuristic estimates based on public website content and HTTP headers.
+        Run <code>acpsec check</code> with a live agent endpoint for authoritative results.
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;padding-top:0.5rem">
+      <button class="btn" onclick="backToStep1()">🔍 Scan another agent</button>
+      <button class="btn btn-primary" onclick="sendToDashboard()">📊 View in Dashboard</button>
+      <button class="btn" onclick="downloadResult()">📥 Export JSON</button>
+    </div>
+
+  </div>
+
+</div><!-- /container -->
+
+<!-- Toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+'use strict';
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+
+const DARK_KEY = 'acpsec-dark';
+if (localStorage.getItem(DARK_KEY) === '1') document.body.classList.add('dark-mode');
+function toggleTheme() {
+  const on = document.body.classList.toggle('dark-mode');
+  localStorage.setItem(DARK_KEY, on ? '1' : '0');
+  if (radarChart) { radarChart.destroy(); buildRadar(_lastControls); }
+}
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+let _profile     = null;   // result of /api/scanner/lookup
+let _scanResult  = null;   // result of /api/scanner/scan
+let _lastControls = [];
+let radarChart   = null;
+
+const RING_CIRC  = 603.19; // 2π × 96
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+
+function showToast(msg, type = 'info', ms = 3500) {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toastContainer').prepend(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+// ── Step helpers ───────────────────────────────────────────────────────────
+
+function setStep(n) {
+  [1, 2, 3].forEach(i => {
+    const el = document.getElementById(`stepItem${i}`);
+    el.classList.remove('active', 'done');
+    if (i < n)  el.classList.add('done');
+    if (i === n) el.classList.add('active');
+  });
+  document.getElementById('step1Card').style.display     = n === 1 ? 'block' : 'none';
+  document.getElementById('step2Card').style.display     = n === 2 ? 'block' : 'none';
+  document.getElementById('step3Container').style.display= n === 3 ? 'block' : 'none';
+}
+
+function backToStep1() {
+  setStep(1);
+  document.getElementById('usernameInput').value = '';
+  document.getElementById('usernameInput').focus();
+}
+
+// ── Step 1: Lookup ──────────────────────────────────────────────────────────
+
+async function lookupProfile() {
+  const raw  = document.getElementById('usernameInput').value.trim();
+  if (!raw)  { showToast('Enter a username first', 'error'); return; }
+
+  const btn  = document.getElementById('lookupBtn');
+  btn.textContent = '⏳ Looking up…';
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch('/api/scanner/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: raw }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Lookup failed');
+
+    _profile = json.data;
+    _populateStep2(_profile);
+    setStep(2);
+
+  } catch (err) {
+    showToast(`Lookup failed: ${err.message}`, 'error', 5000);
+  } finally {
+    btn.textContent = 'Look up →';
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+function _populateStep2(p) {
+  // Avatar
+  const aw = document.getElementById('avatarWrap');
+  if (p.avatar_url) {
+    aw.innerHTML = `<img src="${p.avatar_url}" alt="avatar" onerror="this.parentElement.textContent='🤖'"/>`;
+  } else {
+    aw.textContent = '🤖';
+  }
+
+  // Name / handle / bio
+  document.getElementById('profileDisplayName').textContent = p.display_name || p.username || '—';
+  document.getElementById('profileUsername').textContent    = `@${p.username}`;
+  document.getElementById('profileBio').textContent         = p.bio || '';
+
+  const linkEl = document.getElementById('profileLink');
+  if (p.website) {
+    linkEl.textContent  = p.website;
+    linkEl.style.display = 'block';
+  } else {
+    linkEl.style.display = 'none';
+  }
+
+  // Pre-fill editable fields
+  document.getElementById('agentNameInput').value = p.display_name || p.username || '';
+  document.getElementById('targetUrlInput').value  = p.website || '';
+
+  // Scrape warning
+  const warnEl = document.getElementById('scrapeWarning');
+  if (p.source === 'failed' || p.error) {
+    warnEl.innerHTML = `
+      <div class="notice warn">
+        <span class="notice-icon">⚠️</span>
+        <span>${p.error || 'Profile scraping failed.'} Please fill in the details manually.</span>
+      </div>`;
+    warnEl.style.display = 'block';
+  } else {
+    warnEl.style.display = 'none';
+  }
+}
+
+// ── Step 2 → 3: Scan ───────────────────────────────────────────────────────
+
+async function startScan() {
+  const url       = document.getElementById('targetUrlInput').value.trim();
+  const agentName = document.getElementById('agentNameInput').value.trim();
+
+  if (!url) {
+    showToast('Please enter a website URL to scan', 'error');
+    document.getElementById('targetUrlInput').focus();
+    return;
+  }
+
+  const btn = document.getElementById('scanBtn');
+  btn.textContent = '⏳ Scanning…';
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch('/api/scanner/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url,
+        agent_name: agentName,
+        username: _profile?.username || '',
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.ok) {
+      throw new Error(json.error || 'Scan failed');
+    }
+
+    _scanResult = json.data;
+    _renderResults(_scanResult);
+    setStep(3);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    showToast('Scan complete!', 'success');
+
+  } catch (err) {
+    showToast(`Scan failed: ${err.message}`, 'error', 6000);
+  } finally {
+    btn.textContent = '🔬 Scan Agent';
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+// ── Render results ─────────────────────────────────────────────────────────
+
+const RING_COLORS = {
+  SECURE:      '#22c55e',
+  HARDENED:    '#4ade80',
+  VULNERABLE:  '#f59e0b',
+  CRITICAL:    '#ef4444',
+  COMPROMISED: '#dc2626',
+};
+
+function _renderResults(d) {
+  const pct = d.score_pct || (d.final_score || 0);
+
+  // Ring
+  document.getElementById('resScore').textContent = Math.round(pct);
+  const ring = document.getElementById('ringProgress');
+  setTimeout(() => {
+    ring.style.strokeDashoffset = RING_CIRC - (pct / 100) * RING_CIRC;
+    ring.style.stroke = RING_COLORS[d.band] || '#7f77dd';
+  }, 80);
+
+  // Text
+  document.getElementById('resAgentName').textContent = d.agent_name || '—';
+  document.getElementById('resHandle').textContent    = d.x_username ? `@${d.x_username}` : '';
+  document.getElementById('resVerdict').textContent   = d.verdict || '';
+  document.getElementById('resScanUrl').textContent   = `Scanned: ${d.scan_url || ''}`;
+
+  const bandEl = document.getElementById('resBand');
+  bandEl.textContent = d.band || '—';
+  bandEl.className   = `score-band ${d.band || ''}`;
+
+  // Metrics
+  document.getElementById('metricScore').textContent      = `${Math.round(pct)}`;
+  document.getElementById('metricCritFails').textContent  = d.critical_fails ?? '—';
+  document.getElementById('metricSecHdrs').textContent    = `${d.sec_header_count ?? 0}/9`;
+
+  // Security headers
+  _renderSecHeaders(d.security_headers || {});
+
+  // Radar
+  _lastControls = d.controls || [];
+  if (radarChart) radarChart.destroy();
+  buildRadar(_lastControls);
+
+  // Dimension accordion
+  _renderAccordion(_lastControls);
+}
+
+// Security header pills
+const ALL_SEC_HDRS = [
+  'strict-transport-security',
+  'content-security-policy',
+  'x-frame-options',
+  'x-content-type-options',
+  'referrer-policy',
+  'permissions-policy',
+  'cross-origin-opener-policy',
+  'cross-origin-embedder-policy',
+  'x-xss-protection',
+];
+const HDR_LABELS = {
+  'strict-transport-security':   'HSTS',
+  'content-security-policy':     'CSP',
+  'x-frame-options':             'X-Frame',
+  'x-content-type-options':      'X-Content-Type',
+  'referrer-policy':             'Referrer-Policy',
+  'permissions-policy':          'Permissions-Policy',
+  'cross-origin-opener-policy':  'COOP',
+  'cross-origin-embedder-policy':'COEP',
+  'x-xss-protection':            'X-XSS',
+};
+
+function _renderSecHeaders(found) {
+  const strip = document.getElementById('secHdrStrip');
+  strip.innerHTML = ALL_SEC_HDRS.map(h => {
+    const present = h in found;
+    const title   = present ? `${h}: ${found[h]}` : `Missing: ${h}`;
+    return `<span class="hdr-pill ${present ? 'present' : 'missing'}" title="${title}">${HDR_LABELS[h] || h}</span>`;
+  }).join('');
+}
+
+// Radar chart
+function _radarColors() {
+  const dark = document.body.classList.contains('dark-mode');
+  return {
+    grid: dark ? 'rgba(255,255,255,.08)' : '#d9d7ce',
+    ticks: dark ? '#a8a5a0' : '#6b6a66',
+    labels: dark ? '#e8e6dc' : '#1a1a18',
+  };
+}
+
+function buildRadar(controls) {
+  // Group by dimension, compute percentage
+  const dimData = {};
+  controls.forEach(c => {
+    const dim = c.dimension;
+    if (!dimData[dim]) dimData[dim] = { score: 0, max: 0 };
+    dimData[dim].score += c.score;
+    dimData[dim].max   += c.max;
+  });
+  const dims   = Object.keys(dimData);
+  const scores = dims.map(d => dimData[d].max > 0
+    ? Math.round((dimData[d].score / dimData[d].max) * 100) : 0);
+
+  const colors = _radarColors();
+  const ctx    = document.getElementById('radarChart').getContext('2d');
+  radarChart   = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels: dims,
+      datasets: [{
+        label: 'Score %',
+        data: scores,
+        borderColor:     'rgba(127,119,221,1)',
+        backgroundColor: 'rgba(127,119,221,0.15)',
+        borderWidth: 2,
+        pointBackgroundColor: 'rgba(127,119,221,1)',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        r: {
+          beginAtZero: true,
+          max: 100,
+          ticks: { color: colors.ticks, font: { size: 11 }, stepSize: 25, backdropColor: 'transparent' },
+          grid:        { color: colors.grid },
+          angleLines:  { color: colors.grid },
+          pointLabels: { color: colors.labels, font: { size: 12, weight: '600' } },
+        },
+      },
+    },
+  });
+}
+
+// Dimension accordion
+const DIM_ICONS = { AUTH:'🔐', CTX:'🗂️', INJ:'💉', PRIV:'🛡️', OUT:'📤', GOV:'📋' };
+
+function _renderAccordion(controls) {
+  // Group controls by dimension preserving order
+  const order = [], groups = {}, names = {};
+  controls.forEach(c => {
+    const d = c.dimension;
+    if (!groups[d]) { groups[d] = []; order.push(d); names[d] = c.dimension_name || d; }
+    groups[d].push(c);
+  });
+
+  const container = document.getElementById('dimAccordion');
+  container.innerHTML = '';
+
+  order.forEach(dim => {
+    const grp    = groups[dim];
+    const total  = grp.reduce((s,c) => s + c.score, 0);
+    const maxPts = grp.reduce((s,c) => s + c.max,   0);
+    const pct    = maxPts > 0 ? (total / maxPts) * 100 : 0;
+    const barCls = pct === 0 ? '#ef4444' : pct < 50 ? '#f59e0b' : '#22c55e';
+
+    const block = document.createElement('div');
+    block.className = 'dim-block';
+    block.innerHTML = `
+      <div class="dim-header" onclick="toggleDim(this.parentElement)">
+        <span class="dim-pill">${DIM_ICONS[dim] || ''} ${dim}</span>
+        <span class="dim-name">${names[dim]}</span>
+        <div class="dim-score-bar-wrap">
+          <div class="dim-score-bar">
+            <div class="dim-score-bar-fill" style="width:${Math.round(pct)}%;background:${barCls}"></div>
+          </div>
+          <span class="dim-score-val" style="color:${barCls}">${total.toFixed(1)} / ${maxPts}</span>
+        </div>
+        <span class="dim-chevron">▶</span>
+      </div>
+      <div class="dim-checks">
+        ${grp.map(c => _renderCheck(c)).join('')}
+      </div>`;
+    container.appendChild(block);
+  });
+}
+
+function toggleDim(block) {
+  block.classList.toggle('open');
+}
+
+function _renderCheck(c) {
+  const pct    = c.max > 0 ? (c.score / c.max) * 100 : 0;
+  const barCls = pct === 0 ? 'red' : pct < 50 ? 'amber' : 'green';
+  const sevCls = (c.severity || 'medium').toLowerCase();
+  const stCls  = (c.status || 'fail').toLowerCase();
+
+  const recs = (c.recommendations || []).slice(0, 3).map(r =>
+    `<div class="check-rec">${r}</div>`).join('');
+
+  return `
+    <div class="check-row">
+      <div class="check-id-col">
+        <span class="check-id ${sevCls}">${c.ctrl}</span>
+        <span class="status-badge ${stCls}">${(c.status || 'fail').toUpperCase()}</span>
+      </div>
+      <div class="check-name-col">
+        <span class="check-name">${c.name}</span>
+        <span class="check-finding">${c.finding || ''}</span>
+        ${recs ? `<div class="check-recs">${recs}</div>` : ''}
+      </div>
+      <div class="check-score-col">${c.score.toFixed(1)} / ${c.max}</div>
+      <div class="check-bar-col">
+        <div class="check-bar">
+          <div class="check-bar-fill ${barCls}" style="width:${Math.round(pct)}%"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+
+async function sendToDashboard() {
+  if (!_scanResult) return;
+  try {
+    const res = await fetch('/api/score', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_scanResult),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      showToast('Sent to dashboard!', 'success');
+      setTimeout(() => window.location.href = '/', 900);
+    } else {
+      showToast('Could not send — is serve.py running?', 'error');
+    }
+  } catch {
+    showToast('Server unavailable', 'error');
+  }
+}
+
+function downloadResult() {
+  if (!_scanResult) return;
+  const blob = new Blob([JSON.stringify(_scanResult, null, 2)], { type: 'application/json' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `acpsec-scan-${(_scanResult.agent_name || 'agent').replace(/\s+/g, '-')}-${Date.now()}.json`;
+  a.click();
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+setStep(1);
+document.getElementById('usernameInput').focus();
+</script>
+</body>
+</html>

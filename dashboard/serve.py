@@ -2,12 +2,15 @@
 
 Routes
 ------
-GET  /                  → serve acp-sec-dashboard.html
-GET  /api/score         → return current score (memory → disk → null)
-POST /api/score         → accept acpsec / ASF JSON, normalise, persist
-POST /api/score/manual  → accept hand-entered control scores, compute band
-DELETE /api/score       → clear in-memory + disk store
-GET  /api/controls      → return check metadata for the scoring editor
+GET  /                       → serve acp-sec-dashboard.html
+GET  /scanner                → serve scanner.html (Agent Scanner MVP)
+GET  /api/score              → return current score (memory → disk → null)
+POST /api/score              → accept acpsec / ASF JSON, normalise, persist
+POST /api/score/manual       → accept hand-entered control scores, compute band
+DELETE /api/score            → clear in-memory + disk store
+GET  /api/controls           → return check metadata for the scoring editor
+POST /api/scanner/lookup     → scrape X/Twitter profile via Nitter
+POST /api/scanner/scan       → heuristic website security analysis
 
 Usage
 -----
@@ -34,7 +37,9 @@ app = Flask(__name__)
 PORT = int(os.environ.get("PORT", 5001))
 
 DASHBOARD_HTML = Path(__file__).parent / "acp-sec-dashboard.html"
+SCANNER_HTML   = Path(__file__).parent / "scanner.html"
 STORE_FILE     = Path(__file__).parent / "score_store.json"
+SCAN_STORE     = Path(__file__).parent / "scan_store.json"
 
 # In-memory cache; populated from disk on startup
 _current_score: dict[str, Any] | None = None
@@ -218,12 +223,90 @@ def _auto_normalise(data: dict) -> dict:
     )
 
 # ---------------------------------------------------------------------------
+# Scanner module (lazy import — only needed for /scanner routes)
+# ---------------------------------------------------------------------------
+
+def _get_scanner():
+    """Import scanner module on first use (avoids startup cost)."""
+    try:
+        import scanner as _scanner  # local module in same directory  # noqa: PLC0415
+        return _scanner
+    except ImportError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 @app.get("/")
 def index():
     return send_file(DASHBOARD_HTML)
+
+
+@app.get("/scanner")
+def scanner_page():
+    return send_file(SCANNER_HTML)
+
+
+@app.post("/api/scanner/lookup")
+def scanner_lookup():
+    """Scrape basic X/Twitter profile info via Nitter.
+
+    Request body: { "username": "@agentname" }
+    Returns: { ok, data: { username, display_name, bio, website, avatar_url, source, error } }
+    """
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    payload  = request.get_json(force=True)
+    username = (payload.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "'username' is required"}), 422
+
+    sc = _get_scanner()
+    if sc is None:
+        return jsonify({"error": "scanner module not available"}), 503
+
+    result = sc.scrape_x_profile(username)
+    return jsonify({"ok": True, "data": result}), 200
+
+
+@app.post("/api/scanner/scan")
+def scanner_scan():
+    """Heuristic website security analysis mapped to acpsec checks.
+
+    Request body: { "url": "https://...", "agent_name": "...", "username": "@..." }
+    Returns: { ok, data: <dashboard wire format> } or { ok: false, error }
+    """
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    payload    = request.get_json(force=True)
+    url        = (payload.get("url") or "").strip()
+    agent_name = (payload.get("agent_name") or "").strip()
+    username   = (payload.get("username")   or "").strip()
+
+    if not url:
+        return jsonify({"error": "'url' is required"}), 422
+
+    sc = _get_scanner()
+    if sc is None:
+        return jsonify({"error": "scanner module not available"}), 503
+
+    result = sc.analyze_agent(url, agent_name or url)
+    if not result["ok"]:
+        return jsonify(result), 422
+
+    # Attach the X username to the result data for display
+    result["data"]["x_username"] = username
+    result["data"]["agent_name"] = agent_name or result["data"]["agent_name"]
+
+    # Persist last scan (best-effort)
+    try:
+        SCAN_STORE.write_text(json.dumps(result["data"], indent=2, default=str))
+    except OSError:
+        pass
+
+    return jsonify(result), 200
 
 
 @app.get("/api/score")
