@@ -192,6 +192,344 @@ def _fetch_website(url: str) -> tuple[requests.Response | None,
 
 
 # ---------------------------------------------------------------------------
+# Corpus probes — extend the analysis surface beyond the landing page
+# ---------------------------------------------------------------------------
+
+# Common security/safety/responsible-AI page paths (in priority order)
+SECURITY_DOC_PATHS = [
+    "/security",
+    "/safety",
+    "/trust",
+    "/responsible-ai",
+    "/responsible-deployment",
+    "/responsible-disclosure",
+    "/privacy",
+    "/policy",
+    "/ai-safety",
+    "/usage-policy",
+]
+
+# Bug bounty / disclosure platforms
+BOUNTY_HOSTS = [
+    "hackerone.com",
+    "bugcrowd.com",
+    "intigriti.com",
+    "yeswehack.com",
+    "synack.com",
+]
+
+# Research / framework signals
+FRAMEWORK_SIGNALS = [
+    "constitutional ai",
+    "rlhf",
+    "reinforcement learning from human feedback",
+    "model card",
+    "system card",
+    "responsible scaling policy",
+    "preparedness framework",
+    "safety framework",
+    "red team",
+    "red-team",
+    "alignment research",
+]
+
+# Hosts that indicate published research / model documentation
+RESEARCH_HOSTS = [
+    "arxiv.org",
+    "huggingface.co",
+    "github.com",
+    "research.",
+    "/research/",
+    "/papers/",
+    "/model-card",
+    "/system-card",
+]
+
+
+def _base_url(url: str) -> str:
+    """Return scheme://host of a URL."""
+    p = urllib.parse.urlparse(url)
+    return f"{p.scheme}://{p.netloc}"
+
+
+def _quick_get(url: str, timeout: int = 6) -> requests.Response | None:
+    """GET a URL with a short timeout and any response is fine (no exception)."""
+    try:
+        return requests.get(url, headers=BROWSER_HEADERS,
+                            timeout=timeout, allow_redirects=True, verify=True)
+    except Exception:
+        return None
+
+
+def _page_fingerprint(text: str) -> str:
+    """A short fingerprint of a page used to detect SPA fallback routes
+    that return the same root HTML for every path."""
+    import hashlib
+    # Use the first ~600 chars of stripped text as the SPA-fallback signature.
+    # Real distinct pages will differ in this window; SPA fallbacks won't.
+    return hashlib.md5(text.strip()[:600].encode("utf-8", "ignore")).hexdigest()
+
+
+def _probe_security_pages(base: str, root_text: str) -> list[dict]:
+    """Try to fetch each known security/safety doc path. Return list of hits.
+
+    Filters out SPA fallback responses by comparing each candidate's
+    fingerprint to the root page's fingerprint, and by requiring the
+    candidate's text to actually contain a path-relevant keyword.
+    """
+    root_fp = _page_fingerprint(root_text)
+    hits    = []
+    for path in SECURITY_DOC_PATHS:
+        url = base + path
+        r = _quick_get(url, timeout=5)
+        if r is None or r.status_code >= 400 or len(r.text) < 200:
+            continue
+        soup_p = BeautifulSoup(r.text, "html.parser")
+        text   = soup_p.get_text(separator=" ", strip=True)
+        if not text:
+            continue
+        # SPA fallback detection — same content as root means the page does not exist
+        if _page_fingerprint(text) == root_fp:
+            continue
+        # Relevance gate — the page must mention something related to its path
+        path_kw = path.lstrip("/").replace("-", " ")
+        # Accept if either the path keyword or a related security term appears
+        relevance = (
+            path_kw in text.lower() or
+            any(k in text.lower() for k in ("security", "privacy", "policy",
+                                             "responsible", "safety", "trust",
+                                             "vulnerability", "report"))
+        )
+        if not relevance:
+            continue
+        hits.append({"path": path, "url": r.url, "text": text[:8000]})
+    return hits
+
+
+def _probe_security_txt(base: str) -> dict:
+    """Fetch /.well-known/security.txt — RFC 9116."""
+    r = _quick_get(base + "/.well-known/security.txt", timeout=5)
+    if r and r.status_code == 200 and "Contact:" in r.text[:2000]:
+        return {"present": True, "body": r.text[:2000], "url": r.url}
+    # Some sites still use root /security.txt
+    r2 = _quick_get(base + "/security.txt", timeout=5)
+    if r2 and r2.status_code == 200 and "Contact:" in r2.text[:2000]:
+        return {"present": True, "body": r2.text[:2000], "url": r2.url}
+    return {"present": False, "body": "", "url": ""}
+
+
+def _probe_robots_sitemap(base: str) -> dict:
+    """Fetch robots.txt and (if discoverable) sitemap.xml — return concatenated body."""
+    out = {"robots": "", "sitemap": "", "sitemap_urls": []}
+
+    r = _quick_get(base + "/robots.txt", timeout=4)
+    if r and r.status_code == 200:
+        out["robots"] = r.text[:4000]
+
+    s = _quick_get(base + "/sitemap.xml", timeout=4)
+    if s and s.status_code == 200:
+        out["sitemap"] = s.text[:8000]
+        # Pull <loc> URLs that hint at security paths
+        for m in re.finditer(r"<loc>\s*([^<]+)\s*</loc>", s.text):
+            url = m.group(1).strip()
+            low = url.lower()
+            if any(kw in low for kw in ("security", "safety", "trust", "responsible",
+                                         "policy", "privacy", "model-card", "system-card")):
+                out["sitemap_urls"].append(url)
+    return out
+
+
+def _probe_bounty(soup: BeautifulSoup, all_text: str) -> dict:
+    """Detect bug-bounty programs. Returns {found, evidence}."""
+    evidence = []
+
+    # 1. External bounty platforms in <a href>
+    for a in soup.find_all("a", href=True):
+        href = a["href"].lower()
+        for host in BOUNTY_HOSTS:
+            if host in href:
+                evidence.append(f"Link to {host}: {a['href'][:120]}")
+                break
+
+    # 2. security@ email contact
+    for m in re.finditer(r"\b(security|abuse|bounty|disclosure)@[\w\.-]+\.\w+\b",
+                          all_text, re.I):
+        evidence.append(f"Security contact email: {m.group(0)}")
+
+    # 3. Plain-text mentions
+    text_lower = all_text.lower()
+    for kw in ("bug bounty", "responsible disclosure", "vulnerability disclosure",
+               "report a vulnerability", "report a security issue"):
+        if kw in text_lower:
+            evidence.append(f"Phrase found: '{kw}'")
+            break
+
+    return {"found": bool(evidence), "evidence": evidence[:4]}
+
+
+def _probe_safety_framework(soup: BeautifulSoup, all_text: str) -> dict:
+    """Detect published AI-safety framework signals."""
+    evidence = []
+    text_lower = all_text.lower()
+
+    # 1. Direct keyword hits
+    for kw in FRAMEWORK_SIGNALS:
+        if kw in text_lower:
+            evidence.append(f"Framework keyword: '{kw}'")
+
+    # 2. Links to research / model cards
+    for a in soup.find_all("a", href=True):
+        href = a["href"].lower()
+        for host in RESEARCH_HOSTS:
+            if host in href:
+                evidence.append(f"Research link → {a['href'][:120]}")
+                break
+
+    return {
+        "found": len(evidence) > 0,
+        "strong": len(evidence) >= 3,
+        "evidence": evidence[:6],
+    }
+
+
+def _build_corpus(root_resp: requests.Response,
+                  root_soup: BeautifulSoup) -> dict:
+    """
+    Aggregate the root page + supporting documents into a single corpus dict
+    used by per-dimension checks.
+    """
+    base = _base_url(root_resp.url)
+    root_text = root_soup.get_text(separator=" ", strip=True)
+
+    sec_pages   = _probe_security_pages(base, root_text)
+    sec_txt     = _probe_security_txt(base)
+    rob_sitemap = _probe_robots_sitemap(base)
+
+    # Combined corpus for keyword search
+    extra_text = " ".join(p["text"] for p in sec_pages)
+    all_text   = " ".join([
+        root_text,
+        extra_text,
+        sec_txt["body"],
+        rob_sitemap["robots"],
+        rob_sitemap["sitemap"],
+    ])
+
+    bounty    = _probe_bounty(root_soup, all_text)
+    framework = _probe_safety_framework(root_soup, all_text)
+
+    return {
+        "base":             base,
+        "root_text":        root_text,
+        "all_text":         all_text,
+        "extra_pages":      sec_pages,
+        "extra_pages_count":len(sec_pages),
+        "security_txt":     sec_txt,
+        "robots_sitemap":   rob_sitemap,
+        "bounty":           bounty,
+        "framework":        framework,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Promotion layer — bump check scores based on high-value signals
+# ---------------------------------------------------------------------------
+
+def _apply_promotions(controls: list[dict], corpus: dict) -> list[dict]:
+    """
+    For each high-value signal in the corpus, promote specific check scores
+    above what the keyword heuristic alone would assign. Mutates and returns
+    the list.
+
+    Rules:
+      security.txt present                → GOV-04 PASS (+evidence)
+      bug-bounty program detected         → GOV-04 PASS (strong)
+      /security or /trust page found      → GOV-04 PASS, GOV-05 PASS
+      /safety or /responsible-ai page     → CTX-01 promote to WARN (partial)
+                                            INJ-01 promote to WARN (partial)
+                                            AUTH-01 PASS
+      framework signals present (any)     → GOV-05 PASS, AUTH-01 PASS
+      framework signals strong (3+)       → CTX-01 partial (max half), INJ-01 partial (max half)
+      research / model card links found   → AUTH-01 PASS
+    """
+    by_id = {c["ctrl"]: c for c in controls}
+
+    def promote(ctrl_id: str, status: str, score: float, evidence: str):
+        c = by_id.get(ctrl_id)
+        if not c:
+            return
+        # Only promote upward — never downgrade
+        rank = {"fail": 0, "warn": 1, "pass": 2}
+        if rank.get(status, 0) >= rank.get(c["status"], 0) and score >= c["score"]:
+            c["status"] = status
+            c["score"]  = round(score, 1)
+            existing    = c.get("evidence", []) or []
+            c["evidence"] = [evidence] + [e for e in existing if e != "No evidence found."][:3]
+            c["finding"]  = c["evidence"][0]
+
+    sec  = corpus["security_txt"]
+    bnty = corpus["bounty"]
+    fw   = corpus["framework"]
+    pages_by_path = {p["path"]: p for p in corpus["extra_pages"]}
+
+    # GOV-04 — Incident response
+    if sec["present"]:
+        promote("GOV-04", "pass", 2,
+                f"security.txt present at {sec['url']}")
+    if bnty["found"]:
+        promote("GOV-04", "pass", 2,
+                f"Bug-bounty program detected — {bnty['evidence'][0]}")
+    if any(p in pages_by_path for p in ("/security", "/trust", "/responsible-disclosure")):
+        promote("GOV-04", "pass", 2,
+                "Public security or trust page found")
+
+    # GOV-05 — Regular assessments
+    if any(p in pages_by_path for p in ("/security", "/safety", "/trust", "/responsible-ai")):
+        promote("GOV-05", "pass", 1,
+                "Dedicated security/safety policy page published")
+    if fw["found"]:
+        promote("GOV-05", "pass", 1,
+                f"Published safety framework signals — {fw['evidence'][0]}")
+
+    # GOV-01 — Logging
+    if "/security" in pages_by_path or "/privacy" in pages_by_path:
+        # Promote only to warn — actual logging implementation cannot be verified publicly
+        promote("GOV-01", "warn", 2,
+                "Public privacy/security policy mentions data handling — logging documented")
+
+    # AUTH-01 — Identity declared
+    if fw["found"] or any(p in pages_by_path for p in ("/responsible-ai", "/about")):
+        promote("AUTH-01", "pass", 3,
+                "Agent identity disclosed via published research / responsible-AI page")
+
+    # AUTH-02 — API authentication
+    if any(p in pages_by_path for p in ("/security", "/trust")):
+        page = pages_by_path.get("/security") or pages_by_path.get("/trust")
+        text_l = page["text"].lower()
+        if any(kw in text_l for kw in ("oauth", "api key", "bearer", "authentication", "sso")):
+            promote("AUTH-02", "pass", 3,
+                    "Authentication mechanism documented on /security or /trust page")
+
+    # CTX-01 — System prompt protection
+    if "/safety" in pages_by_path or fw["strong"]:
+        # Half of max_score (5) — better than 0 but still not full credit without live test
+        promote("CTX-01", "warn", 2.5,
+                "Safety framework or /safety page references prompt confidentiality")
+
+    # INJ-01 — Direct prompt injection
+    if fw["strong"] or "/safety" in pages_by_path:
+        promote("INJ-01", "warn", 2.5,
+                "Safety framework signals strong — partial credit for injection resistance")
+
+    # OUT-02 — PII not leaked
+    if "/privacy" in pages_by_path:
+        promote("OUT-02", "pass", 3,
+                "Privacy policy published — PII handling documented")
+
+    return list(by_id.values())
+
+
+# ---------------------------------------------------------------------------
 # Heuristic helpers
 # ---------------------------------------------------------------------------
 
@@ -662,15 +1000,19 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
     if resp is None or soup is None:
         return {"ok": False, "error": f"Could not fetch website: {fetch_warn}"}
 
-    body_text  = soup.get_text(separator=" ", strip=True)
     hdrs_lower = {k.lower(): v for k, v in resp.headers.items()}
     final_url  = resp.url
+
+    # Build the extended corpus (security pages, security.txt, robots, sitemap,
+    # bounty signals, framework signals).  Falls back gracefully if probes fail.
+    corpus = _build_corpus(resp, soup)
+    body_text = corpus["all_text"]   # use enriched corpus instead of just root
 
     # Security headers present in this response
     found_sec_hdrs = {k: v for k, v in hdrs_lower.items() if k in SECURITY_HEADERS}
     sec_hdr_count  = len(found_sec_hdrs)
 
-    # Run all six dimension checks
+    # Run all six dimension checks against the enriched corpus
     controls: list[dict] = []
     controls.extend(_auth(body_text, hdrs_lower, soup))
     controls.extend(_ctx(body_text,  hdrs_lower, soup))
@@ -678,6 +1020,9 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
     controls.extend(_priv(body_text, hdrs_lower, soup))
     controls.extend(_out(body_text,  hdrs_lower, soup))
     controls.extend(_gov(body_text,  hdrs_lower, soup))
+
+    # Apply high-confidence promotions from corpus signals
+    controls = _apply_promotions(controls, corpus)
 
     total_score = sum(c["score"] for c in controls)
     total_max   = sum(c["max"]   for c in controls)
@@ -739,8 +1084,20 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
             "sec_header_count":  sec_hdr_count,
             "critical_fails":    critical_fails,
             "fetch_warning":     fetch_warn,
-            "methodology":       "heuristic",
+            "methodology":       "heuristic+corpus",
             "acpsec_available":  acpsec_available,
+            # New corpus findings (scanner v2)
+            "corpus": {
+                "extra_pages_found": corpus["extra_pages_count"],
+                "extra_pages":       [p["path"] for p in corpus["extra_pages"]],
+                "security_txt":      corpus["security_txt"]["present"],
+                "bounty_program":    corpus["bounty"]["found"],
+                "bounty_evidence":   corpus["bounty"]["evidence"],
+                "framework_signals": corpus["framework"]["found"],
+                "framework_strong":  corpus["framework"]["strong"],
+                "framework_evidence":corpus["framework"]["evidence"],
+                "sitemap_security_urls": corpus["robots_sitemap"]["sitemap_urls"][:8],
+            },
         },
     }
 

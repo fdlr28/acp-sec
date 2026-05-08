@@ -1,0 +1,184 @@
+{
+  "generated_at": "2026-05-08T18:45:21.521479+00:00",
+  "scanner_version": "2.1 (corpus + promotions + SPA-fallback detection)",
+  "methodology": "heuristic+corpus \u2014 root + verified-real /security pages + security.txt + sitemap + bounty + framework",
+  "comparison_against": "reports/benchmark_may2026.json (v1)",
+  "fixes_in_v2": [
+    "Build corpus from up to 10 supporting documents",
+    "Detect /.well-known/security.txt (RFC 9116)",
+    "Detect bug-bounty programs (hackerone/bugcrowd/security@/disclosure phrases)",
+    "Detect AI-safety framework signals (constitutional AI, RLHF, model card, arxiv links)",
+    "Probe robots.txt and sitemap.xml for security-related paths",
+    "Fingerprint-based SPA-fallback detection (skip 200-OK responses identical to root)",
+    "Relevance gate (skip 'security' page that doesn't mention security-related terms)",
+    "Promotion layer: high-value signals upgrade specific check scores"
+  ],
+  "penalty_per_critical_fail": 5,
+  "dimension_weights": {
+    "AUTH": 15,
+    "CTX": 20,
+    "INJ": 20,
+    "PRIV": 20,
+    "OUT": 15,
+    "GOV": 10
+  },
+  "targets": {
+    "Claude.ai": {
+      "url": "https://claude.ai",
+      "final_score": 14.4,
+      "raw_score": 29.4,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 3,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "CTX-01",
+        "PRIV-02"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 7.4,
+          "max": 15
+        },
+        "CTX": {
+          "score": 3.2,
+          "max": 20
+        },
+        "INJ": {
+          "score": 8.0,
+          "max": 20
+        },
+        "PRIV": {
+          "score": 3.2,
+          "max": 20
+        },
+        "OUT": {
+          "score": 7.2,
+          "max": 15
+        },
+        "GOV": {
+          "score": 0.4,
+          "max": 10
+        }
+      },
+      "corpus": {
+        "extra_pages_found": 0,
+        "extra_pages": [],
+        "security_txt": false,
+        "bounty_program": false,
+        "bounty_evidence": [],
+        "framework_signals": false,
+        "framework_strong": false,
+        "framework_evidence": [],
+        "sitemap_security_urls": []
+      },
+      "v1_final_score": 12.3,
+      "delta_vs_v1": 2.1
+    },
+    "Grok": {
+      "url": "https://grok.com",
+      "final_score": 17.4,
+      "raw_score": 32.4,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 3,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "CTX-01",
+        "PRIV-02"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 8.4,
+          "max": 15
+        },
+        "CTX": {
+          "score": 3.2,
+          "max": 20
+        },
+        "INJ": {
+          "score": 8.0,
+          "max": 20
+        },
+        "PRIV": {
+          "score": 3.2,
+          "max": 20
+        },
+        "OUT": {
+          "score": 7.2,
+          "max": 15
+        },
+        "GOV": {
+          "score": 2.4,
+          "max": 10
+        }
+      },
+      "corpus": {
+        "extra_pages_found": 0,
+        "extra_pages": [],
+        "security_txt": true,
+        "bounty_program": false,
+        "bounty_evidence": [],
+        "framework_signals": false,
+        "framework_strong": false,
+        "framework_evidence": [],
+        "sitemap_security_urls": []
+      },
+      "v1_final_score": 10.8,
+      "delta_vs_v1": 6.6
+    },
+    "Bankr": {
+      "url": "https://www.bankr.bot",
+      "final_score": 4.5,
+      "raw_score": 24.5,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 4,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "CTX-01",
+        "INJ-01",
+        "PRIV-02"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 6.9,
+          "max": 15
+        },
+        "CTX": {
+          "score": 1.6,
+          "max": 20
+        },
+        "INJ": {
+          "score": 6.0,
+          "max": 20
+        },
+        "PRIV": {
+          "score": 3.2,
+          "max": 20
+        },
+        "OUT": {
+          "score": 6.4,
+          "max": 15
+        },
+        "GOV": {
+          "score": 0.4,
+          "max": 10
+        }
+      },
+      "corpus": {
+        "extra_pages_found": 0,
+        "extra_pages": [],
+        "security_txt": false,
+        "bounty_program": false,
+        "bounty_evidence": [],
+        "framework_signals": false,
+        "framework_strong": false,
+        "framework_evidence": [],
+        "sitemap_security_urls": []
+      },
+      "v1_final_score": 1.4,
+      "delta_vs_v1": 3.1
+    }
+  }
+}

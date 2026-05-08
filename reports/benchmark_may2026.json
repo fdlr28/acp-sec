@@ -1,0 +1,177 @@
+{
+  "generated_at": "2026-05-08T18:31:58.297729+00:00",
+  "methodology": "heuristic \u2014 public website content + HTTP headers",
+  "penalty_per_critical_fail": 5,
+  "dimension_weights": {
+    "AUTH": 15,
+    "CTX": 20,
+    "INJ": 20,
+    "PRIV": 20,
+    "OUT": 15,
+    "GOV": 10
+  },
+  "targets": {
+    "Claude.ai": {
+      "url": "https://claude.ai",
+      "final_score": 12.3,
+      "raw_score": 27.3,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 3,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "CTX-01",
+        "PRIV-02"
+      ],
+      "sec_header_count": 7,
+      "security_headers": [
+        "x-xss-protection",
+        "strict-transport-security",
+        "content-security-policy",
+        "cross-origin-opener-policy",
+        "permissions-policy",
+        "referrer-policy",
+        "x-content-type-options"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 6.9,
+          "max": 15,
+          "pct": 46.0
+        },
+        "CTX": {
+          "score": 3.2,
+          "max": 20,
+          "pct": 16.0
+        },
+        "INJ": {
+          "score": 8.0,
+          "max": 20,
+          "pct": 40.0
+        },
+        "PRIV": {
+          "score": 1.6,
+          "max": 20,
+          "pct": 8.0
+        },
+        "OUT": {
+          "score": 7.2,
+          "max": 15,
+          "pct": 48.0
+        },
+        "GOV": {
+          "score": 0.4,
+          "max": 10,
+          "pct": 4.0
+        }
+      },
+      "scan_url": "https://claude.ai/login"
+    },
+    "Grok": {
+      "url": "https://grok.com",
+      "final_score": 10.8,
+      "raw_score": 25.8,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 3,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "CTX-01",
+        "PRIV-02"
+      ],
+      "sec_header_count": 6,
+      "security_headers": [
+        "strict-transport-security",
+        "content-security-policy",
+        "permissions-policy",
+        "referrer-policy",
+        "x-content-type-options",
+        "x-frame-options"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 5.4,
+          "max": 15,
+          "pct": 36.0
+        },
+        "CTX": {
+          "score": 3.2,
+          "max": 20,
+          "pct": 16.0
+        },
+        "INJ": {
+          "score": 8.0,
+          "max": 20,
+          "pct": 40.0
+        },
+        "PRIV": {
+          "score": 1.6,
+          "max": 20,
+          "pct": 8.0
+        },
+        "OUT": {
+          "score": 7.2,
+          "max": 15,
+          "pct": 48.0
+        },
+        "GOV": {
+          "score": 0.4,
+          "max": 10,
+          "pct": 4.0
+        }
+      },
+      "scan_url": "https://grok.com/"
+    },
+    "Bankr": {
+      "url": "https://www.bankr.bot",
+      "final_score": 1.4,
+      "raw_score": 21.4,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 4,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "CTX-01",
+        "INJ-01",
+        "PRIV-02"
+      ],
+      "sec_header_count": 1,
+      "security_headers": [
+        "strict-transport-security"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 5.4,
+          "max": 15,
+          "pct": 36.0
+        },
+        "CTX": {
+          "score": 1.6,
+          "max": 20,
+          "pct": 8.0
+        },
+        "INJ": {
+          "score": 6.0,
+          "max": 20,
+          "pct": 30.0
+        },
+        "PRIV": {
+          "score": 1.6,
+          "max": 20,
+          "pct": 8.0
+        },
+        "OUT": {
+          "score": 6.4,
+          "max": 15,
+          "pct": 42.7
+        },
+        "GOV": {
+          "score": 0.4,
+          "max": 10,
+          "pct": 4.0
+        }
+      },
+      "scan_url": "https://bankr.bot/"
+    }
+  }
+}
