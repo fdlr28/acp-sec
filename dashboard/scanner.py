@@ -245,6 +245,69 @@ RESEARCH_HOSTS = [
     "/system-card",
 ]
 
+# Map of consumer agent domains → their parent organization domain.
+# When a target appears here, the scanner also probes the parent domain
+# (where most safety/security documentation actually lives — e.g. claude.ai
+# is a chat product, while anthropic.com hosts the safety hub).
+# Setting a value to None means "this domain has no known parent — do not probe".
+PARENT_DOMAINS: dict[str, str | None] = {
+    # Anthropic
+    "claude.ai":              "anthropic.com",
+    "console.anthropic.com":  "anthropic.com",
+    # xAI
+    "grok.com":               "x.ai",
+    "x.com":                  None,   # X / Twitter — not an agent target
+    # OpenAI
+    "chatgpt.com":            "openai.com",
+    "chat.openai.com":        "openai.com",
+    # Google DeepMind
+    "gemini.google.com":      "deepmind.google",
+    "bard.google.com":        "deepmind.google",
+    # Microsoft
+    "copilot.microsoft.com":  "microsoft.com",
+    "bing.com":               "microsoft.com",
+    # Meta
+    "meta.ai":                "ai.meta.com",
+    # Mistral
+    "chat.mistral.ai":        "mistral.ai",
+    # Perplexity
+    "perplexity.ai":          None,   # parent is itself
+    # Crypto / agent commerce
+    "bankr.bot":              None,   # no known parent organization
+    "www.bankr.bot":          None,
+}
+
+# Extra parent-only paths that are common on org/transparency hubs
+PARENT_EXTRA_PATHS = [
+    "/research",
+    "/research/",
+    "/transparency",
+    "/transparency-hub",
+    "/trust-center",
+    "/responsible-scaling-policy",
+    "/preparedness",
+    "/safety-framework",
+    "/security-policy",
+    "/usage-policies",
+    "/system-card",
+    "/model-card",
+]
+
+
+def _resolve_parent(url: str) -> str | None:
+    """Resolve the parent domain for a target URL, if any."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except Exception:
+        return None
+    if host in PARENT_DOMAINS:
+        return PARENT_DOMAINS[host]
+    if host.startswith("www."):
+        bare = host[4:]
+        if bare in PARENT_DOMAINS:
+            return PARENT_DOMAINS[bare]
+    return None
+
 
 def _base_url(url: str) -> str:
     """Return scheme://host of a URL."""
@@ -392,6 +455,93 @@ def _probe_safety_framework(soup: BeautifulSoup, all_text: str) -> dict:
     }
 
 
+def _build_parent_corpus(parent_domain: str) -> dict:
+    """Probe a parent organization domain for safety/security signals.
+
+    Lighter-weight than _build_corpus(): skips per-page text aggregation
+    for unrelated content, focuses on the high-signal probes only.
+    Returns {reachable: bool, ...} so callers can branch cleanly.
+    """
+    base = f"https://{parent_domain}"
+    root = _quick_get(base, timeout=8)
+    if root is None or root.status_code >= 400 or not root.text:
+        return {
+            "domain":             parent_domain,
+            "reachable":          False,
+            "extra_pages":        [],
+            "extra_pages_count":  0,
+            "security_txt":       False,
+            "bounty_program":     False,
+            "bounty_evidence":    [],
+            "framework_signals":  False,
+            "framework_strong":   False,
+            "framework_evidence": [],
+            "research_links":     0,
+        }
+
+    root_soup = BeautifulSoup(root.text, "html.parser")
+    root_text = root_soup.get_text(separator=" ", strip=True)
+
+    # 1. Standard security/safety doc paths + a few parent-specific ones
+    sec_pages_paths = SECURITY_DOC_PATHS + PARENT_EXTRA_PATHS
+    sec_pages = []
+    seen_paths: set[str] = set()
+    for path in sec_pages_paths:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        url = base + path
+        r = _quick_get(url, timeout=4)
+        if r is None or r.status_code >= 400 or len(r.text) < 200:
+            continue
+        soup_p = BeautifulSoup(r.text, "html.parser")
+        text   = soup_p.get_text(separator=" ", strip=True)
+        if not text or _page_fingerprint(text) == _page_fingerprint(root_text):
+            continue
+        relevance = (
+            path.lstrip("/").replace("-", " ").split("/")[0] in text.lower()
+            or any(k in text.lower() for k in ("security", "privacy", "policy",
+                                                "responsible", "safety", "trust",
+                                                "research", "framework", "model card",
+                                                "system card", "vulnerability"))
+        )
+        if not relevance:
+            continue
+        sec_pages.append({"path": path, "url": r.url, "text": text[:6000]})
+
+    # 2. security.txt
+    sec_txt = _probe_security_txt(base)
+
+    # 3. Aggregate text from root + extra pages for keyword search
+    extra_text = " ".join(p["text"] for p in sec_pages)
+    all_text   = " ".join([root_text, extra_text, sec_txt["body"]])
+
+    # 4. Bounty + framework
+    bounty    = _probe_bounty(root_soup, all_text)
+    framework = _probe_safety_framework(root_soup, all_text)
+
+    # 5. Count research links specifically
+    research_count = sum(
+        1 for a in root_soup.find_all("a", href=True)
+        if any(host in a["href"].lower() for host in RESEARCH_HOSTS)
+    )
+
+    return {
+        "domain":             parent_domain,
+        "reachable":          True,
+        "extra_pages":        [p["path"] for p in sec_pages],
+        "extra_pages_count":  len(sec_pages),
+        "security_txt":       sec_txt["present"],
+        "security_txt_url":   sec_txt.get("url", ""),
+        "bounty_program":     bounty["found"],
+        "bounty_evidence":    bounty["evidence"],
+        "framework_signals":  framework["found"],
+        "framework_strong":   framework["strong"],
+        "framework_evidence": framework["evidence"],
+        "research_links":     research_count,
+    }
+
+
 def _build_corpus(root_resp: requests.Response,
                   root_soup: BeautifulSoup) -> dict:
     """
@@ -434,6 +584,107 @@ def _build_corpus(root_resp: requests.Response,
 # ---------------------------------------------------------------------------
 # Promotion layer — bump check scores based on high-value signals
 # ---------------------------------------------------------------------------
+
+def _apply_parent_promotions(controls: list[dict], parent: dict) -> list[dict]:
+    """Apply score promotions based on signals from the PARENT organization.
+
+    Parent signals are weaker evidence than direct target signals — the
+    parent might publish strong safety policies even if the consumer agent
+    runtime doesn't enforce them. Promotions therefore tend toward 'warn'
+    (partial credit) rather than 'pass', and never override a target-level
+    promotion that already passed.
+    """
+    if not parent.get("reachable"):
+        return controls
+
+    by_id = {c["ctrl"]: c for c in controls}
+
+    rank = {"fail": 0, "warn": 1, "pass": 2}
+
+    def promote(ctrl_id: str, status: str, score: float, evidence: str):
+        c = by_id.get(ctrl_id)
+        if not c:
+            return
+        if rank.get(status, 0) >= rank.get(c["status"], 0) and score >= c["score"]:
+            c["status"] = status
+            c["score"]  = round(score, 1)
+            existing    = c.get("evidence", []) or []
+            tag = f"[parent: {parent['domain']}] {evidence}"
+            c["evidence"] = [tag] + [e for e in existing if e != "No evidence found."][:3]
+            c["finding"]  = c["evidence"][0]
+
+    pages = parent.get("extra_pages", [])
+
+    # GOV-04 — Incident response (parent security.txt or bounty → strong signal)
+    if parent.get("security_txt"):
+        promote("GOV-04", "pass", 2,
+                f"Parent organization publishes security.txt at {parent.get('security_txt_url','')}")
+    if parent.get("bounty_program"):
+        promote("GOV-04", "pass", 2,
+                f"Parent runs a bug-bounty program — {parent['bounty_evidence'][0] if parent['bounty_evidence'] else ''}")
+    if any(p in pages for p in ("/security", "/trust", "/responsible-disclosure")):
+        promote("GOV-04", "pass", 2,
+                f"Parent {parent['domain']} publishes a /security or /trust page")
+
+    # GOV-05 — Regular assessments / framework / research
+    if any(p in pages for p in ("/safety", "/responsible-ai", "/trust",
+                                  "/responsible-scaling-policy", "/preparedness",
+                                  "/transparency", "/research")):
+        promote("GOV-05", "pass", 1,
+                f"Parent {parent['domain']} publishes safety/research framework")
+    if parent.get("framework_signals"):
+        ev = parent['framework_evidence'][0] if parent['framework_evidence'] else 'framework signals'
+        promote("GOV-05", "pass", 1,
+                f"Parent publishes safety framework — {ev}")
+
+    # GOV-01 — Logging (parent /privacy or /security mentions data handling)
+    if "/privacy" in pages or "/security" in pages:
+        promote("GOV-01", "warn", 2,
+                "Parent publishes privacy/security policy with data-handling commitments")
+
+    # AUTH-01 — Identity declared (research links + framework = strong identity story)
+    if parent.get("framework_strong") or parent.get("research_links", 0) >= 3:
+        promote("AUTH-01", "pass", 3,
+                f"Parent publishes research/framework establishing agent identity")
+    elif parent.get("framework_signals"):
+        promote("AUTH-01", "warn", 2,
+                "Parent organization publishes safety framework signals")
+
+    # AUTH-02 — API auth documented at parent level
+    if any(p in pages for p in ("/security", "/trust", "/api", "/developers")):
+        promote("AUTH-02", "warn", 2,
+                f"Parent {parent['domain']} documents API security/trust")
+
+    # CTX-01 — System prompt protection (parent safety framework hints at it)
+    if parent.get("framework_strong") or "/safety" in pages or "/system-card" in pages:
+        promote("CTX-01", "warn", 2.5,
+                "Parent publishes system card / safety framework — partial CTX-01 credit")
+
+    # CTX-03 — Injected context sanitization (parent framework strong = published guidance)
+    if parent.get("framework_strong"):
+        promote("CTX-03", "warn", 2,
+                "Parent publishes context-handling framework")
+
+    # INJ-01 — Direct injection (Constitutional AI / RLHF / RSP signals)
+    if parent.get("framework_strong"):
+        promote("INJ-01", "warn", 2.5,
+                "Parent publishes strong safety framework — partial INJ-01 credit")
+    elif parent.get("framework_signals"):
+        promote("INJ-01", "warn", 2,
+                "Parent mentions safety framework signals")
+
+    # INJ-02 — Indirect injection (parent research mentions tool-use safety)
+    if parent.get("framework_strong") and parent.get("research_links", 0) >= 2:
+        promote("INJ-02", "warn", 2,
+                "Parent publishes tool-use / agentic safety research")
+
+    # OUT-02 — PII / privacy
+    if "/privacy" in pages:
+        promote("OUT-02", "pass", 3,
+                "Parent organization publishes privacy policy")
+
+    return list(by_id.values())
+
 
 def _apply_promotions(controls: list[dict], corpus: dict) -> list[dict]:
     """
@@ -1021,8 +1272,28 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
     controls.extend(_out(body_text,  hdrs_lower, soup))
     controls.extend(_gov(body_text,  hdrs_lower, soup))
 
-    # Apply high-confidence promotions from corpus signals
+    # Apply high-confidence promotions from target-level corpus signals
     controls = _apply_promotions(controls, corpus)
+
+    # Snapshot scores BEFORE parent promotions so we can attribute the lift
+    score_before_parent = sum(c["score"] for c in controls)
+
+    # Parent-organization probe (e.g. claude.ai → anthropic.com)
+    parent_domain = _resolve_parent(final_url)
+    parent_data: dict | None = None
+    parent_contribution = 0.0
+    if parent_domain:
+        try:
+            parent_data = _build_parent_corpus(parent_domain)
+            controls = _apply_parent_promotions(controls, parent_data)
+            score_after_parent  = sum(c["score"] for c in controls)
+            parent_contribution = round(score_after_parent - score_before_parent, 1)
+        except Exception as exc:
+            parent_data = {
+                "domain":    parent_domain,
+                "reachable": False,
+                "error":     str(exc),
+            }
 
     total_score = sum(c["score"] for c in controls)
     total_max   = sum(c["max"]   for c in controls)
@@ -1084,9 +1355,13 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
             "sec_header_count":  sec_hdr_count,
             "critical_fails":    critical_fails,
             "fetch_warning":     fetch_warn,
-            "methodology":       "heuristic+corpus",
+            "methodology":       "heuristic+corpus+parent",
             "acpsec_available":  acpsec_available,
-            # New corpus findings (scanner v2)
+            # Parent-organization probe (scanner v3)
+            "parent_domain":             parent_domain,
+            "parent_signals":            parent_data,
+            "parent_score_contribution": parent_contribution,
+            # Target-level corpus findings (scanner v2)
             "corpus": {
                 "extra_pages_found": corpus["extra_pages_count"],
                 "extra_pages":       [p["path"] for p in corpus["extra_pages"]],

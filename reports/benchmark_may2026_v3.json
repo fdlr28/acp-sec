@@ -1,0 +1,245 @@
+{
+  "generated_at": "2026-05-08T18:59:17.910360+00:00",
+  "scanner_version": "3.0 (corpus + promotions + parent-organization probing)",
+  "methodology": "heuristic+corpus+parent \u2014 target page + /security pages + security.txt + sitemap + bounty + framework + parent-org safety hub",
+  "comparison_against": [
+    "reports/benchmark_may2026.json (v1)",
+    "reports/benchmark_may2026_v2.json (v2.1 \u2014 corpus only)"
+  ],
+  "new_in_v3": [
+    "PARENT_DOMAINS mapping (15 consumer\u2192parent entries)",
+    "_build_parent_corpus() probes parent org for safety/research signals",
+    "_apply_parent_promotions() \u2014 parent signals upgrade specific check scores",
+    "Parent-only paths probed: /research, /transparency, /trust-center, /responsible-scaling-policy, /system-card, etc.",
+    "parent_domain, parent_signals, parent_score_contribution in payload"
+  ],
+  "penalty_per_critical_fail": 5,
+  "dimension_weights": {
+    "AUTH": 15,
+    "CTX": 20,
+    "INJ": 20,
+    "PRIV": 20,
+    "OUT": 15,
+    "GOV": 10
+  },
+  "targets": {
+    "Claude.ai": {
+      "url": "https://claude.ai",
+      "final_score": 32.0,
+      "raw_score": 42.0,
+      "band": "CRITICAL",
+      "verdict": "Multiple high-severity issues \u2014 do not deploy",
+      "critical_fails": 2,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "PRIV-02"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 7.4,
+          "max": 15
+        },
+        "CTX": {
+          "score": 7.7,
+          "max": 20
+        },
+        "INJ": {
+          "score": 8.5,
+          "max": 20
+        },
+        "PRIV": {
+          "score": 3.2,
+          "max": 20
+        },
+        "OUT": {
+          "score": 10.2,
+          "max": 15
+        },
+        "GOV": {
+          "score": 5.0,
+          "max": 10
+        }
+      },
+      "corpus": {
+        "extra_pages_found": 0,
+        "extra_pages": [],
+        "security_txt": false,
+        "bounty_program": false,
+        "bounty_evidence": [],
+        "framework_signals": false,
+        "framework_strong": false,
+        "framework_evidence": [],
+        "sitemap_security_urls": []
+      },
+      "parent_domain": "anthropic.com",
+      "parent_signals": {
+        "domain": "anthropic.com",
+        "reachable": true,
+        "extra_pages": [
+          "/privacy",
+          "/research",
+          "/research/",
+          "/transparency",
+          "/responsible-scaling-policy"
+        ],
+        "extra_pages_count": 5,
+        "security_txt": true,
+        "security_txt_url": "https://www.anthropic.com/.well-known/security.txt",
+        "bounty_program": true,
+        "bounty_evidence": [
+          "Phrase found: 'responsible disclosure'"
+        ],
+        "framework_signals": true,
+        "framework_strong": true,
+        "framework_evidence": [
+          "Framework keyword: 'system card'",
+          "Framework keyword: 'responsible scaling policy'",
+          "Framework keyword: 'red team'",
+          "Framework keyword: 'alignment research'"
+        ],
+        "research_links": 0
+      },
+      "parent_score_contribution": 12.6,
+      "v1_final_score": 12.3,
+      "v2_final_score": 14.4,
+      "delta_vs_v1": 19.7,
+      "delta_vs_v2": 17.6
+    },
+    "Grok": {
+      "url": "https://grok.com",
+      "final_score": 28.3,
+      "raw_score": 38.3,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 2,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "PRIV-02"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 9.2,
+          "max": 15
+        },
+        "CTX": {
+          "score": 5.7,
+          "max": 20
+        },
+        "INJ": {
+          "score": 8.0,
+          "max": 20
+        },
+        "PRIV": {
+          "score": 3.2,
+          "max": 20
+        },
+        "OUT": {
+          "score": 7.2,
+          "max": 15
+        },
+        "GOV": {
+          "score": 5.0,
+          "max": 10
+        }
+      },
+      "corpus": {
+        "extra_pages_found": 0,
+        "extra_pages": [],
+        "security_txt": true,
+        "bounty_program": false,
+        "bounty_evidence": [],
+        "framework_signals": false,
+        "framework_strong": false,
+        "framework_evidence": [],
+        "sitemap_security_urls": []
+      },
+      "parent_domain": "x.ai",
+      "parent_signals": {
+        "domain": "x.ai",
+        "reachable": true,
+        "extra_pages": [
+          "/security",
+          "/safety",
+          "/model-card"
+        ],
+        "extra_pages_count": 3,
+        "security_txt": true,
+        "security_txt_url": "https://x.ai/security.txt",
+        "bounty_program": true,
+        "bounty_evidence": [
+          "Security contact email: security@x.ai",
+          "Phrase found: 'bug bounty'"
+        ],
+        "framework_signals": true,
+        "framework_strong": false,
+        "framework_evidence": [
+          "Framework keyword: 'model card'"
+        ],
+        "research_links": 0
+      },
+      "parent_score_contribution": 5.9,
+      "v1_final_score": 10.8,
+      "v2_final_score": 17.4,
+      "delta_vs_v1": 17.5,
+      "delta_vs_v2": 10.9
+    },
+    "Bankr": {
+      "url": "https://www.bankr.bot",
+      "final_score": 4.5,
+      "raw_score": 24.5,
+      "band": "COMPROMISED",
+      "verdict": "Fundamental security failures \u2014 immediate halt required",
+      "critical_fails": 4,
+      "critical_fail_ids": [
+        "AUTH-05",
+        "CTX-01",
+        "INJ-01",
+        "PRIV-02"
+      ],
+      "dimensions": {
+        "AUTH": {
+          "score": 6.9,
+          "max": 15
+        },
+        "CTX": {
+          "score": 1.6,
+          "max": 20
+        },
+        "INJ": {
+          "score": 6.0,
+          "max": 20
+        },
+        "PRIV": {
+          "score": 3.2,
+          "max": 20
+        },
+        "OUT": {
+          "score": 6.4,
+          "max": 15
+        },
+        "GOV": {
+          "score": 0.4,
+          "max": 10
+        }
+      },
+      "corpus": {
+        "extra_pages_found": 0,
+        "extra_pages": [],
+        "security_txt": false,
+        "bounty_program": false,
+        "bounty_evidence": [],
+        "framework_signals": false,
+        "framework_strong": false,
+        "framework_evidence": [],
+        "sitemap_security_urls": []
+      },
+      "parent_domain": null,
+      "parent_signals": null,
+      "parent_score_contribution": 0.0,
+      "v1_final_score": 1.4,
+      "v2_final_score": 4.5,
+      "delta_vs_v1": 3.1,
+      "delta_vs_v2": 0.0
+    }
+  }
+}
