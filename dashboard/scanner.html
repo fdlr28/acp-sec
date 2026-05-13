@@ -700,11 +700,52 @@
         <label class="field-label" for="targetUrlInput">Website URL to Scan</label>
         <input type="text" id="targetUrlInput" class="text-input"
                placeholder="https://agent-website.com"
+               oninput="onUrlChange()"
                onkeydown="if(event.key==='Enter') startScan()"/>
         <div class="field-hint">
           Paste the agent's website, landing page, or docs URL. We'll scrape it for security signals.
         </div>
       </div>
+
+      <!-- URL normalisation preview (ISSUE 4) -->
+      <div id="urlNormBanner" class="notice info" style="display:none;flex-direction:column;align-items:stretch;gap:0.5rem">
+        <div style="display:flex;gap:0.5rem;align-items:flex-start">
+          <span class="notice-icon">🎯</span>
+          <div style="flex:1;font-size:.78rem">
+            <div><strong>You entered:</strong>&nbsp;<code id="urlEntered" style="color:var(--text-primary)"></code></div>
+            <div><strong>Will scan:</strong>&nbsp;<code id="urlWillScan" style="color:var(--accent-purple)"></code></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:1rem;font-size:.78rem;padding-left:1.6rem">
+          <label style="display:flex;gap:.35rem;align-items:center;cursor:pointer">
+            <input type="radio" name="scanMode" value="root" checked onchange="onUrlChange()"/>
+            <span>Root domain&nbsp;<span style="color:var(--text-tertiary)">(recommended)</span></span>
+          </label>
+          <label style="display:flex;gap:.35rem;align-items:center;cursor:pointer">
+            <input type="radio" name="scanMode" value="exact" onchange="onUrlChange()"/>
+            <span>Exact URL you entered</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- No-website suggestions panel (ISSUE 3) -->
+      <details id="noUrlPanel" style="border:1px solid var(--border);border-radius:8px;padding:.5rem .9rem;font-size:.8rem">
+        <summary style="cursor:pointer;font-weight:600;color:var(--text-secondary)">
+          🤷 Don't have a website?
+        </summary>
+        <div style="margin-top:.6rem;padding-left:.3rem;color:var(--text-secondary);line-height:1.6">
+          Try one of these public sources instead:
+          <ul style="margin:.4rem 0 .6rem 1.2rem;padding:0">
+            <li><strong>Parent organization website</strong> (e.g. <code>anthropic.com</code> for Claude)</li>
+            <li><strong>GitHub repository</strong> (e.g. <code>github.com/&lt;org&gt;/&lt;agent&gt;</code>)</li>
+            <li><strong>LinkedIn company page</strong> (<code>linkedin.com/company/&lt;name&gt;</code>)</li>
+            <li><strong>Documentation site</strong> (often <code>docs.&lt;name&gt;.com</code>)</li>
+          </ul>
+          <button class="btn" type="button" onclick="xOnlyScan()" style="font-size:.75rem">
+            ↳ Skip website — score from X profile only (limited)
+          </button>
+        </div>
+      </details>
 
       <div class="notice info">
         <span class="notice-icon">ℹ️</span>
@@ -941,22 +982,82 @@ function _populateStep2(p) {
   }
 }
 
+// ── URL normalisation (ISSUE 4) ────────────────────────────────────────────
+
+function _normalizeUrl(raw) {
+  if (!raw) return { entered: '', root: '', host: '', path: '' };
+  let url = raw.trim();
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  try {
+    const u    = new URL(url);
+    const root = `${u.protocol}//${u.host}/`;
+    return { entered: url, root, host: u.host, path: u.pathname + u.search };
+  } catch {
+    return { entered: url, root: url, host: '', path: '' };
+  }
+}
+
+function _getScanMode() {
+  const sel = document.querySelector('input[name="scanMode"]:checked');
+  return sel ? sel.value : 'root';
+}
+
+function onUrlChange() {
+  const raw   = document.getElementById('targetUrlInput').value;
+  const norm  = _normalizeUrl(raw);
+  const banner = document.getElementById('urlNormBanner');
+
+  // Only show banner if there's a path (i.e. user pasted a subpath)
+  const hasSubpath = norm.path && norm.path !== '/' && norm.path !== '';
+  if (!raw || !hasSubpath) {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'flex';
+  document.getElementById('urlEntered').textContent  = norm.entered;
+  document.getElementById('urlWillScan').textContent =
+    _getScanMode() === 'root' ? norm.root : norm.entered;
+}
+
 // ── Step 2 → 3: Scan ───────────────────────────────────────────────────────
 
 async function startScan() {
   const url       = document.getElementById('targetUrlInput').value.trim();
   const agentName = document.getElementById('agentNameInput').value.trim();
+  const scanMode  = _getScanMode();
+  // Only forward the X handle when scraping actually succeeded (ISSUE 1)
+  const scraped   = _profile?.source === 'nitter';
 
   if (!url) {
     showToast('Please enter a website URL to scan', 'error');
     document.getElementById('targetUrlInput').focus();
     return;
   }
+  if (!agentName) {
+    showToast('Please enter an agent name', 'error');
+    document.getElementById('agentNameInput').focus();
+    return;
+  }
 
   const btn = document.getElementById('scanBtn');
-  btn.textContent = '⏳ Scanning…';
   btn.classList.add('loading');
   btn.disabled = true;
+
+  // BUG #3 — phased progress messages so the user knows the scan is alive.
+  const phases = [
+    { at:    0, msg: '⏳ Fetching landing page…' },
+    { at: 3500, msg: '⏳ Probing security & policy pages…' },
+    { at: 9000, msg: '⏳ Probing parent organization…' },
+    { at: 25000, msg: '⏳ Aggregating signals (almost done)…' },
+  ];
+  const phaseStart = Date.now();
+  btn.textContent = phases[0].msg;
+  const phaseTimer = setInterval(() => {
+    const elapsed = Date.now() - phaseStart;
+    let current = phases[0];
+    for (const p of phases) if (elapsed >= p.at) current = p;
+    btn.textContent = current.msg;
+  }, 750);
 
   try {
     const res  = await fetch('/api/scanner/scan', {
@@ -965,14 +1066,26 @@ async function startScan() {
       body: JSON.stringify({
         url,
         agent_name: agentName,
-        username: _profile?.username || '',
+        username:   _profile?.username || '',
+        scraped,
+        scan_mode:  scanMode,
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(45_000),
     });
     const json = await res.json();
 
     if (!res.ok || !json.ok) {
-      throw new Error(json.error || 'Scan failed');
+      const msg = json.error || 'Scan failed';
+      // If backend suggested an alternative URL, offer it inline
+      if (json.suggestion) {
+        showToast(`${msg}`, 'error', 8000);
+        if (confirm(`${msg}\n\nWould you like to try the suggested URL instead?\n${json.suggestion}`)) {
+          document.getElementById('targetUrlInput').value = json.suggestion;
+          onUrlChange();
+        }
+        return;
+      }
+      throw new Error(msg);
     }
 
     _scanResult = json.data;
@@ -984,10 +1097,23 @@ async function startScan() {
   } catch (err) {
     showToast(`Scan failed: ${err.message}`, 'error', 6000);
   } finally {
+    clearInterval(phaseTimer);
     btn.textContent = '🔬 Scan Agent';
     btn.classList.remove('loading');
     btn.disabled = false;
   }
+}
+
+// X-only fallback scan (ISSUE 3) — uses X bio/profile as the only signal.
+// Sends a minimal pseudo-URL `x://<username>` that the backend rejects today
+// but the UI surfaces a tailored message and limited score scaffold.
+function xOnlyScan() {
+  const u = (_profile?.username || '').trim();
+  if (!u) { showToast('No X username available', 'error'); return; }
+  const fakeUrl = `https://twitter.com/${u}`;
+  document.getElementById('targetUrlInput').value = fakeUrl;
+  onUrlChange();
+  showToast('Will scan X profile page only — score will be limited (≤ 30 pts).', 'info', 5500);
 }
 
 // ── Render results ─────────────────────────────────────────────────────────
@@ -1011,11 +1137,30 @@ function _renderResults(d) {
     ring.style.stroke = RING_COLORS[d.band] || '#7f77dd';
   }, 80);
 
-  // Text
-  document.getElementById('resAgentName').textContent = d.agent_name || '—';
-  document.getElementById('resHandle').textContent    = d.x_username ? `@${d.x_username}` : '';
-  document.getElementById('resVerdict').textContent   = d.verdict || '';
-  document.getElementById('resScanUrl').textContent   = `Scanned: ${d.scan_url || ''}`;
+  // Text — ISSUE 1: prefer the live agent_name input (server now echoes it,
+  // but we read the input field defensively to guarantee no stale value).
+  const liveName = (document.getElementById('agentNameInput')?.value || '').trim();
+  const displayName = liveName || d.agent_name || '—';
+  document.getElementById('resAgentName').textContent = displayName;
+
+  // Show the @handle ONLY when the X profile was actually scraped from
+  // Nitter (`x_handle_verified`). Otherwise it's just whatever the user
+  // typed in step 1 and is misleading.
+  const handleEl = document.getElementById('resHandle');
+  if (d.x_handle_verified && d.x_username) {
+    handleEl.textContent = `@${d.x_username}`;
+    handleEl.style.display = '';
+  } else {
+    handleEl.textContent = '';
+    handleEl.style.display = 'none';
+  }
+
+  document.getElementById('resVerdict').textContent = d.verdict || '';
+  // Show normalisation note in the URL line when scan_mode rewrote the URL
+  const urlNote = (d.scan_mode === 'root' && d.original_url && d.original_url !== d.scan_url)
+    ? `Scanned: ${d.scan_url}  (normalised from ${d.original_url})`
+    : `Scanned: ${d.scan_url || ''}`;
+  document.getElementById('resScanUrl').textContent = urlNote;
 
   const bandEl = document.getElementById('resBand');
   bandEl.textContent = d.band || '—';

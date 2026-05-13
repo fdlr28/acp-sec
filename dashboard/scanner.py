@@ -12,7 +12,9 @@ Real acpsec checks require an API key and a running agent endpoint.
 
 from __future__ import annotations
 
+import concurrent.futures
 import re
+import time
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Any
@@ -34,6 +36,77 @@ NITTER_INSTANCES = [
 
 DEFAULT_TIMEOUT = 9   # seconds per request
 SCRAPE_TIMEOUT  = 12
+
+# Tight (connect, read) tuple for the primary site fetch — hard 15 s ceiling
+FETCH_CONNECT_TIMEOUT = 5
+FETCH_READ_TIMEOUT    = 10
+
+# Status codes / page signals that mean "authentication required".
+# Kept tight — landing pages of OAuth-using products (e.g. claude.ai with its
+# "Sign in with Google" button) must NOT trigger.  Only strong, content-only-
+# meaningful phrases count.
+LOGIN_WALL_STATUS = {401, 403}
+LOGIN_WALL_SIGNALS = [
+    "authentication required",
+    "login required",
+    "you must be logged in",
+    "you must be signed in",
+    "please sign in to continue",
+    "please log in to continue",
+    "log in to access",
+    "create an account to continue",
+    "this page requires a login",
+    'id="login-form"',
+    'name="loginform"',
+]
+# Maximum body length (chars) for a page to be considered a login-only wall.
+# Real content pages are normally larger than this even when minified.
+LOGIN_WALL_MAX_BODY = 8000
+
+# URL path prefixes that almost always require auth — used to suggest a
+# better alternative (root domain or parent landing page).
+APP_PATH_PREFIXES = ("/chat", "/app", "/dashboard", "/console", "/workspace",
+                     "/admin", "/account", "/settings", "/playground")
+
+# ── Scan timing budgets (BUG #3 — cumulative timeout) ─────────────────────
+# Total hard ceiling for analyze_agent().  Any probe that has not completed
+# by this deadline is cancelled.
+SCAN_BUDGET_SECONDS = 45
+PARALLEL_WORKERS    = 6
+
+# ── Self-probe domains (BUG #1) ───────────────────────────────────────────
+# When the target *is* itself a parent-style org (publishes safety docs at
+# its own root), run the parent-probing logic against the domain itself.
+SELF_PROBE_DOMAINS: set[str] = {
+    "anthropic.com",
+    "openai.com",
+    "deepmind.google",
+    "x.ai",
+    "mistral.ai",
+    "virtuals.io",
+    "perplexity.ai",
+    "ai.meta.com",
+    "microsoft.com",
+}
+
+# Extra paths specific to self-probe orgs (Anthropic, OpenAI, etc.).
+# Appended to SECURITY_DOC_PATHS + PARENT_EXTRA_PATHS when self-probing.
+SELF_PROBE_EXTRA_PATHS = [
+    "/research",
+    "/news/responsible-scaling-policy",
+    "/responsible-scaling-policy",
+    "/system-card",
+    "/model-card",
+    "/transparency",
+    "/trust",
+    "/safety",
+    "/constitutional-ai",
+    "/news",
+    "/usage-policy",
+    "/legal",
+    "/policies",
+    "/index/responsible-disclosure-policy",
+]
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -169,19 +242,24 @@ def scrape_x_profile(username: str) -> dict[str, Any]:
 def _fetch_website(url: str) -> tuple[requests.Response | None,
                                        BeautifulSoup   | None,
                                        str             | None]:
-    """GET `url` and return (response, soup, warning_msg)."""
+    """GET `url` and return (response, soup, warning_msg).
+
+    Uses a (connect, read) timeout tuple so a slow server cannot stall the
+    request past the read budget. Total ceiling ≈ 15 s.
+    """
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+    t = (FETCH_CONNECT_TIMEOUT, FETCH_READ_TIMEOUT)
     try:
         resp = requests.get(url, headers=BROWSER_HEADERS,
-                            timeout=SCRAPE_TIMEOUT, allow_redirects=True,
-                            verify=True)
+                            timeout=t, allow_redirects=True, verify=True)
         return resp, BeautifulSoup(resp.text, "html.parser"), None
+    except requests.exceptions.Timeout:
+        return None, None, "Request timed out (>15 s) — server unresponsive"
     except requests.exceptions.SSLError:
         try:
             resp = requests.get(url, headers=BROWSER_HEADERS,
-                                timeout=SCRAPE_TIMEOUT, allow_redirects=True,
-                                verify=False)
+                                timeout=t, allow_redirects=True, verify=False)
             return (resp,
                     BeautifulSoup(resp.text, "html.parser"),
                     "SSL certificate verification failed — connection unverified")
@@ -189,6 +267,77 @@ def _fetch_website(url: str) -> tuple[requests.Response | None,
             return None, None, str(exc)
     except Exception as exc:
         return None, None, str(exc)
+
+
+def _is_login_wall(resp: requests.Response, soup: BeautifulSoup) -> bool:
+    """Return True if the response looks like an authentication wall.
+
+    Tightened from earlier version to avoid false positives on landing
+    pages that just expose a "Sign in with X" OAuth button.  Two passes:
+
+    1. HTTP 401/403 always counts.
+    2. Strong content signals only count if the page body is unusually
+       small (true login walls are minimal); large marketing pages with
+       sign-in buttons are excluded.
+    """
+    if resp.status_code in LOGIN_WALL_STATUS:
+        return True
+    body = resp.text or ""
+    body_lower = body[:LOGIN_WALL_MAX_BODY].lower()
+    body_len   = len(body)
+
+    if any(sig in body_lower for sig in LOGIN_WALL_SIGNALS) and body_len < LOGIN_WALL_MAX_BODY:
+        return True
+
+    # Title-based heuristic — only on small bodies
+    if body_len < LOGIN_WALL_MAX_BODY:
+        title_el = soup.find("title")
+        if title_el:
+            t = title_el.get_text(strip=True).lower()
+            if t in ("sign in", "login", "log in"):
+                return True
+    return False
+
+
+def _suggest_alt_url(url: str) -> str | None:
+    """When the given URL hits a login wall, suggest a friendlier alternative.
+
+    Order of preference:
+        1. Parent organization root (claude.ai → anthropic.com)
+        2. Same host without the app/chat subpath
+        3. Same host root
+    """
+    try:
+        p = urllib.parse.urlparse(url)
+        host = (p.hostname or "").lower()
+    except Exception:
+        return None
+    # 1. Parent org
+    if host in PARENT_DOMAINS and PARENT_DOMAINS[host]:
+        return f"https://{PARENT_DOMAINS[host]}"
+    if host.startswith("www.") and host[4:] in PARENT_DOMAINS and PARENT_DOMAINS[host[4:]]:
+        return f"https://{PARENT_DOMAINS[host[4:]]}"
+    # 2. Strip /chat, /app, /dashboard, ...
+    path = p.path or ""
+    for prefix in APP_PATH_PREFIXES:
+        if path.startswith(prefix):
+            stripped = f"{p.scheme}://{p.netloc}{path[len(prefix):] or '/'}"
+            if stripped != url:
+                return stripped
+            break
+    # 3. Root domain
+    root = f"{p.scheme}://{p.netloc}/"
+    return root if root != url else None
+
+
+def _normalize_to_root(url: str) -> str:
+    """Strip path/query/fragment, return scheme://host/."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    p = urllib.parse.urlparse(url)
+    if not p.netloc:
+        return url
+    return f"{p.scheme}://{p.netloc}/"
 
 
 # ---------------------------------------------------------------------------
@@ -233,16 +382,21 @@ FRAMEWORK_SIGNALS = [
     "alignment research",
 ]
 
-# Hosts that indicate published research / model documentation
+# Hosts / href substrings that indicate published research / model documentation.
+# Matched via `substring in href.lower()` so bare-path variants like "/research"
+# correctly catch hrefs like "/research" and "/research/foo" alike.
 RESEARCH_HOSTS = [
     "arxiv.org",
     "huggingface.co",
     "github.com",
     "research.",
-    "/research/",
-    "/papers/",
+    "/research",          # bare + trailing-slash variants both match
+    "/papers",
     "/model-card",
     "/system-card",
+    "/transparency",
+    "/responsible-scaling",
+    "/preparedness",
 ]
 
 # Map of consumer agent domains → their parent organization domain.
@@ -324,6 +478,66 @@ def _quick_get(url: str, timeout: int = 6) -> requests.Response | None:
         return None
 
 
+def _parallel_get(urls: list[str],
+                  timeout: int = 5,
+                  deadline: float | None = None,
+                  max_workers: int = PARALLEL_WORKERS
+                 ) -> dict[str, requests.Response | None]:
+    """Fetch many URLs concurrently (BUG #3).
+
+    Parameters
+    ----------
+    urls
+        Distinct URLs to fetch.
+    timeout
+        Per-request timeout in seconds.
+    deadline
+        Optional monotonic clock value.  Any future not completed by the
+        deadline is cancelled and recorded as None — guarantees the call
+        site never overruns its overall scan budget.
+
+    Returns
+    -------
+    dict mapping each requested URL to its response (or None).
+    """
+    results: dict[str, requests.Response | None] = {u: None for u in urls}
+    if not urls:
+        return results
+
+    workers = min(max_workers, max(1, len(urls)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_quick_get, u, timeout): u for u in urls}
+        for fut in concurrent.futures.as_completed(futures):
+            url = futures[fut]
+            if deadline is not None and time.monotonic() > deadline:
+                # Time's up — cancel everything we can and stop collecting.
+                for f in futures:
+                    if not f.done():
+                        f.cancel()
+                break
+            try:
+                results[url] = fut.result(timeout=1)
+            except Exception:
+                results[url] = None
+    return results
+
+
+def _resolve_self_probe(url: str) -> str | None:
+    """If this URL is itself a parent-style org (publishes its own safety
+    docs), return its bare hostname so we can probe it deeply (BUG #1)."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except Exception:
+        return None
+    if host in SELF_PROBE_DOMAINS:
+        return host
+    if host.startswith("www."):
+        bare = host[4:]
+        if bare in SELF_PROBE_DOMAINS:
+            return bare
+    return None
+
+
 def _page_fingerprint(text: str) -> str:
     """A short fingerprint of a page used to detect SPA fallback routes
     that return the same root HTML for every path."""
@@ -333,18 +547,21 @@ def _page_fingerprint(text: str) -> str:
     return hashlib.md5(text.strip()[:600].encode("utf-8", "ignore")).hexdigest()
 
 
-def _probe_security_pages(base: str, root_text: str) -> list[dict]:
-    """Try to fetch each known security/safety doc path. Return list of hits.
+def _probe_security_pages(base: str, root_text: str,
+                          deadline: float | None = None
+                         ) -> tuple[list[dict], list[str]]:
+    """Try to fetch each known security/safety doc path in parallel.
 
-    Filters out SPA fallback responses by comparing each candidate's
-    fingerprint to the root page's fingerprint, and by requiring the
-    candidate's text to actually contain a path-relevant keyword.
+    Returns (hits, probed_urls).  Probed URLs include every URL attempted
+    so the metadata field can show what the scanner actually requested.
     """
-    root_fp = _page_fingerprint(root_text)
-    hits    = []
-    for path in SECURITY_DOC_PATHS:
-        url = base + path
-        r = _quick_get(url, timeout=5)
+    root_fp     = _page_fingerprint(root_text)
+    probed_urls = [base + p for p in SECURITY_DOC_PATHS]
+    responses   = _parallel_get(probed_urls, timeout=4, deadline=deadline,
+                                 max_workers=10)
+    hits: list[dict] = []
+    for path, url in zip(SECURITY_DOC_PATHS, probed_urls):
+        r = responses.get(url)
         if r is None or r.status_code >= 400 or len(r.text) < 200:
             continue
         soup_p = BeautifulSoup(r.text, "html.parser")
@@ -354,9 +571,8 @@ def _probe_security_pages(base: str, root_text: str) -> list[dict]:
         # SPA fallback detection — same content as root means the page does not exist
         if _page_fingerprint(text) == root_fp:
             continue
-        # Relevance gate — the page must mention something related to its path
+        # Relevance gate — page must mention something related to its path
         path_kw = path.lstrip("/").replace("-", " ")
-        # Accept if either the path keyword or a related security term appears
         relevance = (
             path_kw in text.lower() or
             any(k in text.lower() for k in ("security", "privacy", "policy",
@@ -366,7 +582,7 @@ def _probe_security_pages(base: str, root_text: str) -> list[dict]:
         if not relevance:
             continue
         hits.append({"path": path, "url": r.url, "text": text[:8000]})
-    return hits
+    return hits, probed_urls
 
 
 def _probe_security_txt(base: str) -> dict:
@@ -455,15 +671,47 @@ def _probe_safety_framework(soup: BeautifulSoup, all_text: str) -> dict:
     }
 
 
-def _build_parent_corpus(parent_domain: str) -> dict:
+def _build_parent_corpus(parent_domain: str,
+                         deadline: float | None = None,
+                         include_self_probe_paths: bool = False) -> dict:
     """Probe a parent organization domain for safety/security signals.
 
     Lighter-weight than _build_corpus(): skips per-page text aggregation
     for unrelated content, focuses on the high-signal probes only.
-    Returns {reachable: bool, ...} so callers can branch cleanly.
+
+    BUG #1: when ``include_self_probe_paths`` is True, also probe the
+    Anthropic/OpenAI/etc.-style deep paths (/research, /system-card, …).
+
+    BUG #3: all per-path fetches run in parallel and respect ``deadline``.
     """
     base = f"https://{parent_domain}"
-    root = _quick_get(base, timeout=8)
+    # Budget-aware root fetch — if the overall scan budget has only a few
+    # seconds left, skip the parent probe entirely rather than risk overrun.
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining < 6:
+            return {
+                "domain":             parent_domain,
+                "reachable":          False,
+                "extra_pages":        [],
+                "extra_pages_count":  0,
+                "security_txt":       False,
+                "bounty_program":     False,
+                "bounty_evidence":    [],
+                "framework_signals":  False,
+                "framework_strong":   False,
+                "framework_evidence": [],
+                "research_links":     0,
+                "pages_probed":       [base],
+                "self_probe":         include_self_probe_paths,
+                "skipped":            "scan budget exhausted",
+            }
+        root_timeout = min(6, max(3, int(remaining / 4)))
+    else:
+        root_timeout = 6
+    root = _quick_get(base, timeout=root_timeout)
+    pages_probed: list[str] = [base]
+
     if root is None or root.status_code >= 400 or not root.text:
         return {
             "domain":             parent_domain,
@@ -477,50 +725,70 @@ def _build_parent_corpus(parent_domain: str) -> dict:
             "framework_strong":   False,
             "framework_evidence": [],
             "research_links":     0,
+            "pages_probed":       pages_probed,
+            "self_probe":         include_self_probe_paths,
         }
 
     root_soup = BeautifulSoup(root.text, "html.parser")
     root_text = root_soup.get_text(separator=" ", strip=True)
+    root_fp   = _page_fingerprint(root_text)
 
-    # 1. Standard security/safety doc paths + a few parent-specific ones
-    sec_pages_paths = SECURITY_DOC_PATHS + PARENT_EXTRA_PATHS
-    sec_pages = []
-    seen_paths: set[str] = set()
-    for path in sec_pages_paths:
-        if path in seen_paths:
-            continue
-        seen_paths.add(path)
-        url = base + path
-        r = _quick_get(url, timeout=4)
+    # 1. Build unique path list (standard + parent extras + optional self-probe).
+    # All paths probed for both modes — the high worker count below keeps
+    # total time bounded even with overlap against the target corpus.
+    sec_paths = SECURITY_DOC_PATHS + PARENT_EXTRA_PATHS
+    if include_self_probe_paths:
+        sec_paths = sec_paths + SELF_PROBE_EXTRA_PATHS
+
+    seen: set[str] = set()
+    unique_paths: list[str] = []
+    for p in sec_paths:
+        if p not in seen:
+            seen.add(p)
+            unique_paths.append(p)
+
+    urls = [base + p for p in unique_paths]
+    pages_probed.extend(urls)
+
+    # 2. Parallel fetch with deadline.  Use a higher worker count for parent
+    # probes so 20+ URLs finish in 2-3 round trips instead of 4-5.
+    responses = _parallel_get(urls, timeout=4, deadline=deadline, max_workers=10)
+
+    sec_pages: list[dict] = []
+    for path, url in zip(unique_paths, urls):
+        r = responses.get(url)
         if r is None or r.status_code >= 400 or len(r.text) < 200:
             continue
         soup_p = BeautifulSoup(r.text, "html.parser")
         text   = soup_p.get_text(separator=" ", strip=True)
-        if not text or _page_fingerprint(text) == _page_fingerprint(root_text):
+        if not text or _page_fingerprint(text) == root_fp:
             continue
         relevance = (
             path.lstrip("/").replace("-", " ").split("/")[0] in text.lower()
             or any(k in text.lower() for k in ("security", "privacy", "policy",
                                                 "responsible", "safety", "trust",
                                                 "research", "framework", "model card",
-                                                "system card", "vulnerability"))
+                                                "system card", "vulnerability",
+                                                "constitutional", "scaling policy",
+                                                "preparedness", "alignment"))
         )
         if not relevance:
             continue
         sec_pages.append({"path": path, "url": r.url, "text": text[:6000]})
 
-    # 2. security.txt
-    sec_txt = _probe_security_txt(base)
+    # 3. security.txt (cheap sequential probe — skip if budget tight)
+    if deadline is not None and time.monotonic() > deadline - 3:
+        sec_txt = {"present": False, "body": "", "url": ""}
+    else:
+        sec_txt = _probe_security_txt(base)
+    pages_probed.append(base + "/.well-known/security.txt")
 
-    # 3. Aggregate text from root + extra pages for keyword search
+    # 4. Aggregate text + run keyword probes
     extra_text = " ".join(p["text"] for p in sec_pages)
     all_text   = " ".join([root_text, extra_text, sec_txt["body"]])
+    bounty     = _probe_bounty(root_soup, all_text)
+    framework  = _probe_safety_framework(root_soup, all_text)
 
-    # 4. Bounty + framework
-    bounty    = _probe_bounty(root_soup, all_text)
-    framework = _probe_safety_framework(root_soup, all_text)
-
-    # 5. Count research links specifically
     research_count = sum(
         1 for a in root_soup.find_all("a", href=True)
         if any(host in a["href"].lower() for host in RESEARCH_HOSTS)
@@ -539,11 +807,14 @@ def _build_parent_corpus(parent_domain: str) -> dict:
         "framework_strong":   framework["strong"],
         "framework_evidence": framework["evidence"],
         "research_links":     research_count,
+        "pages_probed":       pages_probed,
+        "self_probe":         include_self_probe_paths,
     }
 
 
 def _build_corpus(root_resp: requests.Response,
-                  root_soup: BeautifulSoup) -> dict:
+                  root_soup: BeautifulSoup,
+                  deadline: float | None = None) -> dict:
     """
     Aggregate the root page + supporting documents into a single corpus dict
     used by per-dimension checks.
@@ -551,7 +822,7 @@ def _build_corpus(root_resp: requests.Response,
     base = _base_url(root_resp.url)
     root_text = root_soup.get_text(separator=" ", strip=True)
 
-    sec_pages   = _probe_security_pages(base, root_text)
+    sec_pages, probed_pages = _probe_security_pages(base, root_text, deadline=deadline)
     sec_txt     = _probe_security_txt(base)
     rob_sitemap = _probe_robots_sitemap(base)
 
@@ -578,6 +849,11 @@ def _build_corpus(root_resp: requests.Response,
         "robots_sitemap":   rob_sitemap,
         "bounty":           bounty,
         "framework":        framework,
+        "pages_probed":     probed_pages + [
+            base + "/.well-known/security.txt",
+            base + "/robots.txt",
+            base + "/sitemap.xml",
+        ],
     }
 
 
@@ -682,6 +958,133 @@ def _apply_parent_promotions(controls: list[dict], parent: dict) -> list[dict]:
     if "/privacy" in pages:
         promote("OUT-02", "pass", 3,
                 "Parent organization publishes privacy policy")
+
+    # ── Extended promotion ruleset (BUG #1 follow-up) ──────────────────────
+    # These rules fire on the same parent signals but lift additional
+    # checks that were previously left at fail/low scores despite strong
+    # evidence (e.g. published responsible-scaling policy, transparency
+    # hub, model/system cards).  They apply equally to parent-of-target
+    # scans and to self-probe scans.
+    is_self = parent.get("self_probe", False)
+    strong  = parent.get("framework_strong", False)
+    fw      = parent.get("framework_signals", False)
+    sectxt  = parent.get("security_txt", False)
+    bounty  = parent.get("bounty_program", False)
+
+    has_rsp = any(p in pages for p in ("/responsible-scaling-policy",
+                                       "/news/responsible-scaling-policy"))
+    has_transparency = "/transparency" in pages
+    has_research     = any(p in pages for p in ("/research", "/research/"))
+    has_system_card  = any(p in pages for p in ("/system-card", "/model-card"))
+    has_constitutional = "/constitutional-ai" in pages
+
+    # AUTH-02 — API auth: strong framework org → assume documented API auth
+    if strong:
+        promote("AUTH-02", "warn", 2,
+                f"Parent {parent['domain']} publishes strong safety framework — API auth assumed")
+
+    # AUTH-04 — Multi-agent trust: published research / preparedness signals
+    if has_research and strong:
+        promote("AUTH-04", "warn", 2,
+                "Parent publishes agentic / multi-agent safety research")
+
+    # AUTH-05 — Identity spoofing: system/model card published
+    if has_system_card or strong:
+        promote("AUTH-05", "warn", 2,
+                "Parent publishes system card / strong framework — identity attestation evidence")
+
+    # CTX-02 — Session isolation: privacy + transparency commitments
+    if "/privacy" in pages and (has_transparency or strong):
+        promote("CTX-02", "warn", 2.5,
+                "Parent publishes privacy + transparency policy — isolation documented")
+
+    # CTX-03 — Context sanitization: stronger lift when framework_strong
+    if strong:
+        promote("CTX-03", "warn", 2.5,
+                "Parent publishes strong safety framework — context handling documented")
+
+    # CTX-04 — Long-context poisoning: published preparedness / RSP
+    if has_rsp or strong:
+        promote("CTX-04", "warn", 2,
+                "Parent publishes responsible-scaling / preparedness research")
+
+    # CTX-05 — Conversation history integrity: privacy + transparency
+    if "/privacy" in pages and has_transparency:
+        promote("CTX-05", "warn", 1.8,
+                "Parent privacy + transparency policy implies history integrity")
+
+    # INJ-02 — Indirect injection: strong framework alone (was: needed 2+ research links)
+    if strong:
+        promote("INJ-02", "warn", 2.5,
+                "Parent publishes strong safety framework — tool-use safety documented")
+
+    # INJ-03 — Multi-turn injection: constitutional AI or framework_strong
+    if has_constitutional or strong:
+        promote("INJ-03", "warn", 2,
+                "Parent publishes Constitutional AI / strong framework — multi-turn mitigation")
+
+    # INJ-04 — Encoded payloads: framework_strong implies red-teaming
+    if strong:
+        promote("INJ-04", "warn", 2,
+                "Parent publishes red-team / safety framework — encoded payload testing implied")
+
+    # PRIV-01 — Tool scoping: usage policy or RSP
+    if has_rsp or any(p in pages for p in ("/usage-policy", "/usage-policies", "/policies")):
+        promote("PRIV-01", "warn", 2,
+                "Parent publishes usage policy — tool scoping documented")
+
+    # PRIV-03 — Tool args validated: system card / framework
+    if has_system_card or strong:
+        promote("PRIV-03", "warn", 2,
+                "Parent publishes system card / framework — tool validation documented")
+
+    # PRIV-04 — Dangerous combinations: framework_strong + RSP
+    if has_rsp and strong:
+        promote("PRIV-04", "warn", 2,
+                "Parent RSP + framework — dangerous combination governance")
+
+    # PRIV-05 — HITL: responsible-scaling policy implies HITL on tier 4+ capabilities
+    if has_rsp:
+        promote("PRIV-05", "warn", 1.5,
+                "Parent RSP documents HITL gating for high-capability releases")
+
+    # OUT-03 — Internal details: framework_strong
+    if strong:
+        promote("OUT-03", "warn", 1.5,
+                "Parent publishes red-team framework — internal-detail leakage tested")
+
+    # OUT-04 — Cross-user isolation: privacy + framework
+    if "/privacy" in pages and strong:
+        promote("OUT-04", "warn", 2,
+                "Parent privacy policy + framework — cross-user isolation documented")
+
+    # OUT-05 — Output filtering: framework_strong
+    if strong:
+        promote("OUT-05", "warn", 1.2,
+                "Parent publishes safety framework — output filtering implied")
+
+    # GOV-02 — Anomaly alerts: transparency hub or bounty implies monitoring
+    if has_transparency or bounty:
+        promote("GOV-02", "warn", 1.4,
+                "Parent transparency / bounty signals — monitoring implied")
+
+    # GOV-03 — Tamper-evident logs: transparency + bounty
+    if has_transparency and (bounty or sectxt):
+        promote("GOV-03", "warn", 1.4,
+                "Parent transparency hub + bounty/security.txt — log integrity implied")
+
+    # SELF-PROBE BONUS — when the target IS the parent org, evidence is direct,
+    # so promote a small number of additional checks to full pass.
+    if is_self:
+        if strong:
+            promote("AUTH-01", "pass", 3,
+                    f"Self-probe: {parent['domain']} publishes its own safety framework")
+        if has_rsp:
+            promote("GOV-05", "pass", 1,
+                    "Self-probe: organization publishes responsible-scaling policy")
+        if has_research:
+            promote("AUTH-04", "pass", 3,
+                    "Self-probe: organization publishes own agentic research")
 
     return list(by_id.values())
 
@@ -1239,24 +1642,65 @@ def _gov(text: str, hdrs: dict, soup: BeautifulSoup) -> list[dict]:
 # Main analysis entry point
 # ---------------------------------------------------------------------------
 
-def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
+def analyze_agent(url: str, agent_name: str = "", scan_mode: str = "root") -> dict[str, Any]:
     """Perform a heuristic website analysis and map findings to acpsec check scores.
+
+    Parameters
+    ----------
+    url
+        The URL to scan.  When ``scan_mode`` is ``"root"`` (default), any path
+        on the URL is stripped before scanning — the scanner always evaluates
+        the public landing page rather than a deep sub-route, which is the
+        single biggest source of false negatives.
+    agent_name
+        Display name for the agent.
+    scan_mode
+        ``"root"`` (default) → normalise to scheme://host/ before scanning.
+        ``"exact"``          → scan the URL exactly as supplied.
 
     Returns a dict:  {"ok": bool, "data": {...} | None, "error": str | None}
     The "data" object matches the dashboard wire format (same as GET /api/score).
     All control entries carry "inferred": true to flag the heuristic methodology.
     """
+    # Start global scan timer (BUG #3 — cumulative timeout)
+    scan_start    = time.monotonic()
+    scan_deadline = scan_start + SCAN_BUDGET_SECONDS
+
+    # URL normalisation (ISSUE 4) — default to root domain
+    original_url = url
+    if scan_mode == "root":
+        url = _normalize_to_root(url)
+
     resp, soup, fetch_warn = _fetch_website(url)
 
     if resp is None or soup is None:
-        return {"ok": False, "error": f"Could not fetch website: {fetch_warn}"}
+        suggestion = _suggest_alt_url(url)
+        err = f"Could not fetch website: {fetch_warn}"
+        if suggestion:
+            err += f" — try: {suggestion}"
+        return {"ok": False, "error": err, "suggestion": suggestion}
+
+    # Login-wall detection (ISSUE 2)
+    if _is_login_wall(resp, soup):
+        suggestion = _suggest_alt_url(resp.url or url)
+        return {
+            "ok": False,
+            "error": (
+                "This URL requires authentication (login wall detected). "
+                "Try the public landing page instead — most security signals "
+                "live on marketing/policy pages, not behind login."
+            ),
+            "suggestion": suggestion,
+            "scanned_url": resp.url,
+            "status_code": resp.status_code,
+        }
 
     hdrs_lower = {k.lower(): v for k, v in resp.headers.items()}
     final_url  = resp.url
 
     # Build the extended corpus (security pages, security.txt, robots, sitemap,
     # bounty signals, framework signals).  Falls back gracefully if probes fail.
-    corpus = _build_corpus(resp, soup)
+    corpus = _build_corpus(resp, soup, deadline=scan_deadline)
     body_text = corpus["all_text"]   # use enriched corpus instead of just root
 
     # Security headers present in this response
@@ -1278,13 +1722,26 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
     # Snapshot scores BEFORE parent promotions so we can attribute the lift
     score_before_parent = sum(c["score"] for c in controls)
 
-    # Parent-organization probe (e.g. claude.ai → anthropic.com)
+    # Parent-organization probe (e.g. claude.ai → anthropic.com).
+    # BUG #1: if the target itself is a parent-style org (anthropic.com,
+    # openai.com, …), self-probe instead — deep-probe its own org paths.
     parent_domain = _resolve_parent(final_url)
+    is_self_probe = False
+    if not parent_domain:
+        self_domain = _resolve_self_probe(final_url)
+        if self_domain:
+            parent_domain = self_domain
+            is_self_probe = True
+
     parent_data: dict | None = None
     parent_contribution = 0.0
     if parent_domain:
         try:
-            parent_data = _build_parent_corpus(parent_domain)
+            parent_data = _build_parent_corpus(
+                parent_domain,
+                deadline=scan_deadline,
+                include_self_probe_paths=is_self_probe,
+            )
             controls = _apply_parent_promotions(controls, parent_data)
             score_after_parent  = sum(c["score"] for c in controls)
             parent_contribution = round(score_after_parent - score_before_parent, 1)
@@ -1293,6 +1750,7 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
                 "domain":    parent_domain,
                 "reachable": False,
                 "error":     str(exc),
+                "self_probe": is_self_probe,
             }
 
     total_score = sum(c["score"] for c in controls)
@@ -1338,6 +1796,39 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
         if c["severity"] == "CRITICAL" and c["status"] == "fail"
     )
 
+    # Total scan duration (BUG #3)
+    scan_duration_ms = int((time.monotonic() - scan_start) * 1000)
+
+    # Aggregate pages probed (BUG #2)
+    pages_probed_list: list[str] = []
+    if corpus.get("pages_probed"):
+        pages_probed_list.extend(corpus["pages_probed"])
+    if parent_data and parent_data.get("pages_probed"):
+        pages_probed_list.extend(parent_data["pages_probed"])
+    # Deduplicate while preserving order
+    seen_pp: set[str] = set()
+    pages_probed_dedup = [u for u in pages_probed_list
+                          if not (u in seen_pp or seen_pp.add(u))]
+
+    # Compact parent-signals summary for metadata
+    parent_signals_summary = None
+    if parent_data:
+        parent_signals_summary = {
+            "domain":              parent_data.get("domain"),
+            "reachable":           parent_data.get("reachable", False),
+            "self_probe":          parent_data.get("self_probe", False),
+            "extra_pages_count":   parent_data.get("extra_pages_count", 0),
+            "extra_pages":         parent_data.get("extra_pages", []),
+            "security_txt":        parent_data.get("security_txt", False),
+            "bounty_program":      parent_data.get("bounty_program", False),
+            "framework_signals":   parent_data.get("framework_signals", False),
+            "framework_strong":    parent_data.get("framework_strong", False),
+            "research_links":      parent_data.get("research_links", 0),
+            "score_contribution":  parent_contribution,
+        }
+
+    scan_timestamp = datetime.now(timezone.utc).isoformat()
+
     return {
         "ok": True,
         "data": {
@@ -1347,7 +1838,7 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
             "verdict":           verdict,
             "final_score":       round(penalised, 2),
             "score_pct":         score_pct,
-            "timestamp":         datetime.now(timezone.utc).isoformat(),
+            "timestamp":         scan_timestamp,
             "controls":          controls,
             "source":            "scanner",
             "scan_url":          final_url,
@@ -1357,6 +1848,22 @@ def analyze_agent(url: str, agent_name: str = "") -> dict[str, Any]:
             "fetch_warning":     fetch_warn,
             "methodology":       "heuristic+corpus+parent",
             "acpsec_available":  acpsec_available,
+            "scan_mode":         scan_mode,
+            "original_url":      original_url,
+            "scan_duration_ms":  scan_duration_ms,
+            "is_self_probe":     is_self_probe,
+            # Full metadata block (BUG #2)
+            "metadata": {
+                "target_url":        final_url,
+                "original_url":      original_url,
+                "parent_domain":     parent_domain,
+                "is_self_probe":     is_self_probe,
+                "scan_timestamp":    scan_timestamp,
+                "scan_duration_ms":  scan_duration_ms,
+                "parent_signals":    parent_signals_summary,
+                "pages_probed":      pages_probed_dedup,
+                "pages_probed_count": len(pages_probed_dedup),
+            },
             # Parent-organization probe (scanner v3)
             "parent_domain":             parent_domain,
             "parent_signals":            parent_data,
