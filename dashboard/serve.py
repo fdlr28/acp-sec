@@ -284,6 +284,13 @@ def scanner_scan():
     url        = (payload.get("url") or "").strip()
     agent_name = (payload.get("agent_name") or "").strip()
     username   = (payload.get("username")   or "").strip()
+    scan_mode  = (payload.get("scan_mode")  or "root").strip().lower()
+    # `scraped` is True only when the X profile was successfully fetched
+    # via Nitter — used by the UI to decide whether to render the @handle.
+    scraped    = bool(payload.get("scraped", False))
+
+    if scan_mode not in ("root", "exact"):
+        scan_mode = "root"
 
     if not url:
         return jsonify({"error": "'url' is required"}), 422
@@ -292,13 +299,16 @@ def scanner_scan():
     if sc is None:
         return jsonify({"error": "scanner module not available"}), 503
 
-    result = sc.analyze_agent(url, agent_name or url)
+    result = sc.analyze_agent(url, agent_name or url, scan_mode=scan_mode)
     if not result["ok"]:
         return jsonify(result), 422
 
-    # Attach the X username to the result data for display
-    result["data"]["x_username"] = username
-    result["data"]["agent_name"] = agent_name or result["data"]["agent_name"]
+    # Attach the X username only when it came from a verified scrape — this
+    # prevents stale @handles from being shown after the user pivots to a
+    # different agent following a scrape failure (ISSUE 1).
+    result["data"]["x_username"]      = username if scraped else ""
+    result["data"]["x_handle_verified"] = scraped
+    result["data"]["agent_name"]      = agent_name or result["data"]["agent_name"]
 
     # Persist last scan (best-effort)
     try:

@@ -1,0 +1,45 @@
+# ── Secrets — NEVER commit ─────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+credentials.json
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ── Build / dist ──────────────────────────────────────────────────────────
+build/
+dist/
+*.whl
+
+# ── Editor / OS ───────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── Project-local state ───────────────────────────────────────────────────
+.rtk/
+dashboard/scan_store.json
+dashboard/score_store.json
+*.log

@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ACP-SEC Benchmark — AI Agent Security Standard v0.1</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0f14;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .card {
+      background: #141720;
+      border: 1px solid #1e2535;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 780px;
+      overflow: hidden;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #1a1f2e 0%, #0f131c 100%);
+      border-bottom: 1px solid #1e2535;
+      padding: 28px 32px 24px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(99,102,241,0.15);
+      border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #818cf8;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    .badge::before { content: "◆"; font-size: 8px; }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f1f5f9;
+      line-height: 1.3;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: #64748b;
+    }
+
+    /* ── Incident banner ── */
+    .incident {
+      margin: 0 32px;
+      margin-top: 20px;
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-left: 3px solid #ef4444;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 12.5px;
+      color: #fca5a5;
+      line-height: 1.6;
+    }
+
+    .incident strong {
+      color: #f87171;
+      font-weight: 700;
+    }
+
+    /* ── Body ── */
+    .body { padding: 20px 32px 28px; }
+
+    /* ── Score pills ── */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 52px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .pill.red    { background: rgba(239,68,68,0.15);  color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
+    .pill.amber  { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.25); }
+    .pill.green  { background: rgba(34,197,94,0.15);  color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
+
+    /* ── Main table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+    }
+
+    thead tr {
+      background: #1a1f2e;
+    }
+
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #475569;
+      border-bottom: 1px solid #1e2535;
+    }
+
+    th:not(:first-child) { text-align: center; }
+
+    td {
+      padding: 11px 14px;
+      border-bottom: 1px solid #1a1f2e;
+      vertical-align: middle;
+    }
+
+    td:not(:first-child) { text-align: center; }
+
+    tbody tr:last-child td { border-bottom: none; }
+
+    tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+    .agent-name {
+      font-weight: 600;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .agent-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .agent-sub {
+      font-size: 11px;
+      color: #475569;
+      font-weight: 400;
+    }
+
+    .delta {
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .delta.pos { color: #4ade80; }
+    .delta.zero { color: #475569; }
+
+    .arrow { font-size: 10px; color: #334155; margin: 0 3px; }
+
+    /* ── Progress bar ── */
+    .bar-wrap {
+      width: 100%;
+      background: #1e2535;
+      border-radius: 4px;
+      height: 6px;
+      margin-top: 4px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+
+    /* ── Legend ── */
+    .legend {
+      display: flex;
+      gap: 20px;
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid #1e2535;
+      flex-wrap: wrap;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      color: #64748b;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+    }
+    .legend-dot.red   { background: #ef4444; }
+    .legend-dot.amber { background: #f59e0b; }
+    .legend-dot.green { background: #22c55e; }
+
+    /* ── Dimension breakdown ── */
+    .dim-section {
+      margin-top: 22px;
+      padding-top: 22px;
+      border-top: 1px solid #1e2535;
+    }
+
+    .dim-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #475569;
+      margin-bottom: 14px;
+    }
+
+    .dim-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .dim-card {
+      background: #1a1f2e;
+      border: 1px solid #1e2535;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .dim-label {
+      font-size: 10.5px;
+      color: #64748b;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .dim-max {
+      font-size: 10px;
+      color: #334155;
+    }
+
+    .dim-scores {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+
+    .dim-score {
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    /* ── Notes ── */
+    .notes {
+      margin-top: 20px;
+      padding: 12px 16px;
+      background: rgba(99,102,241,0.06);
+      border: 1px solid rgba(99,102,241,0.15);
+      border-radius: 8px;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.7;
+    }
+
+    .notes strong { color: #818cf8; }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid #1e2535;
+      padding: 14px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0f131c;
+    }
+
+    .footer-left {
+      font-size: 12px;
+      color: #334155;
+    }
+
+    .footer-right {
+      font-size: 12px;
+      color: #475569;
+    }
+
+    .handle {
+      color: #818cf8;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="badge">ACP-SEC · AI Agent Security Standard</div>
+      <h1>AI Agent Security Benchmark — May 2026</h1>
+      <div class="subtitle">Public heuristic scan · 30 controls · 6 dimensions · 100 pts max</div>
+    </div>
+
+    <!-- Incident context -->
+    <div class="incident">
+      <strong>Context:</strong> Following the Bankr.bot incident (May 2026), where an AI trading agent
+      executed unauthorized transactions due to missing authentication and input validation controls,
+      ACP-SEC v0.1 establishes the first structured security standard for AI agents.
+      Scores below are derived from public signals only — authenticated scans unlock full scoring.
+    </div>
+
+    <!-- Body -->
+    <div class="body">
+
+      <!-- Main benchmark table -->
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>v1 Baseline</th>
+            <th>v2 Corpus</th>
+            <th>v3 + Parent</th>
+            <th>Gain</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- Claude.ai -->
+          <tr>
+            <td>
+              <div class="agent-name">
+                <div class="agent-icon" style="background:rgba(205,147,85,0.15);">🤖</div>
+                <div>
+                  Claude.ai
+                  <div class="agent-sub">claude.ai · parent: anthropic.com</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="pill red">12.3</span></td>
+            <td><span class="pill red">18.1</span></td>
+            <td>
+              <span class="pill amber">32.0</span>
+              <div class="bar-wrap"><div class="bar-fill" style="width:32%;background:#f59e0b;"></div></div>
+            </td>
+            <td>
+              <div class="delta pos">+19.7</div>
+              <div style="font-size:10px;color:#334155;margin-top:2px;">RSP · red team · security.txt</div>
+            </td>
+          </tr>
+
+          <!-- Grok -->
+          <tr>
+            <td>
+              <div class="agent-name">
+                <div class="agent-icon" style="background:rgba(255,255,255,0.05);">⚡</div>
+                <div>
+                  Grok
+                  <div class="agent-sub">grok.com · parent: x.ai</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="pill red">10.8</span></td>
+            <td><span class="pill red">16.4</span></td>
+            <td>
+              <span class="pill amber">28.3</span>
+              <div class="bar-wrap"><div class="bar-fill" style="width:28.3%;background:#f59e0b;"></div></div>
+            </td>
+            <td>
+              <div class="delta pos">+17.5</div>
+              <div style="font-size:10px;color:#334155;margin-top:2px;">model card · security@ · bug bounty</div>
+            </td>
+          </tr>
+
+          <!-- Bankr -->
+          <tr>
+            <td>
+              <div class="agent-name">
+                <div class="agent-icon" style="background:rgba(239,68,68,0.1);">🏦</div>
+                <div>
+                  Bankr.bot
+                  <div class="agent-sub">bankr.bot · no parent org</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="pill red">1.4</span></td>
+            <td><span class="pill red">4.5</span></td>
+            <td>
+              <span class="pill red">4.5</span>
+              <div class="bar-wrap"><div class="bar-fill" style="width:4.5%;background:#ef4444;"></div></div>
+            </td>
+            <td>
+              <div class="delta zero">+0.0</div>
+              <div style="font-size:10px;color:#334155;margin-top:2px;">no public security posture</div>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+
+      <!-- Legend -->
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot red"></div> Critical risk (&lt;20)</div>
+        <div class="legend-item"><div class="legend-dot amber"></div> Moderate risk (20–50)</div>
+        <div class="legend-item"><div class="legend-dot green"></div> Acceptable (50+)</div>
+        <div class="legend-item" style="margin-left:auto;font-size:11px;">100 pts max · public signals only</div>
+      </div>
+
+      <!-- Dimension breakdown -->
+      <div class="dim-section">
+        <div class="dim-title">Dimension breakdown (v3) &nbsp;·&nbsp; Claude / Grok / Bankr</div>
+        <div class="dim-grid">
+
+          <div class="dim-card">
+            <div class="dim-label">AUTH</div>
+            <div class="dim-max">Authentication &amp; Identity · /20</div>
+            <div class="dim-scores">
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">8.5</span>
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">7.0</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">1.0</span>
+            </div>
+          </div>
+
+          <div class="dim-card">
+            <div class="dim-label">CTX</div>
+            <div class="dim-max">Context &amp; Trust Boundary · /15</div>
+            <div class="dim-scores">
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">5.0</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">4.5</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">0.5</span>
+            </div>
+          </div>
+
+          <div class="dim-card">
+            <div class="dim-label">INJ</div>
+            <div class="dim-max">Injection &amp; Prompt Security · /20</div>
+            <div class="dim-scores">
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">7.5</span>
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">6.5</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">1.0</span>
+            </div>
+          </div>
+
+          <div class="dim-card">
+            <div class="dim-label">PRIV</div>
+            <div class="dim-max">Privilege &amp; Tool Auth · /20</div>
+            <div class="dim-scores">
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">5.0</span>
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">5.5</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">1.0</span>
+            </div>
+          </div>
+
+          <div class="dim-card">
+            <div class="dim-label">OUT</div>
+            <div class="dim-max">Output Safety &amp; Leakage · /15</div>
+            <div class="dim-scores">
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">4.0</span>
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">3.5</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">0.5</span>
+            </div>
+          </div>
+
+          <div class="dim-card">
+            <div class="dim-label">GOV</div>
+            <div class="dim-max">Governance &amp; Audit · /10</div>
+            <div class="dim-scores">
+              <span class="dim-score amber" style="background:rgba(245,158,11,0.12);color:#fbbf24;">2.0</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">1.3</span>
+              <span class="dim-score red"   style="background:rgba(239,68,68,0.12);color:#f87171;">0.5</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div class="notes">
+        <strong>⚠ Known ceiling:</strong> 3 CRITICAL runtime behaviors (AUTH-05 auth bypass, CTX-01 context isolation,
+        PRIV-02 self-grant) cannot be inferred from public documentation — they require live authenticated
+        probes to resolve. Max reachable score with public scanner: ~45 pts. Authenticated scan required for full 100-pt assessment.<br><br>
+        <strong>Methodology:</strong> HTTP header analysis · security page corpus · security.txt · bug bounty detection ·
+        AI safety framework signals · parent-org probing (v3). No credentials used. No live agent calls made.
+      </div>
+
+    </div><!-- /body -->
+
+    <!-- Footer -->
+    <div class="footer">
+      <div class="footer-left">
+        ACP-SEC v0.1 · github.com/0xTenxi/acp-sec · May 2026
+      </div>
+      <div class="footer-right">
+        Built by <span class="handle">@0xTenxi</span>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

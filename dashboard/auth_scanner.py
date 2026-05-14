@@ -138,8 +138,64 @@ from __future__ import annotations
 import base64
 import os
 import re
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# .env loader (no python-dotenv dependency)
+# ---------------------------------------------------------------------------
+
+def _load_dotenv(start: Path | None = None) -> Path | None:
+    """Walk up from `start` looking for a .env file; load KEY=VALUE pairs
+    into os.environ unless they're already set.  Returns the path loaded
+    or None if no .env was found.  Quietly ignores malformed lines."""
+    start = start or Path(__file__).resolve().parent
+    for d in [start, *start.parents]:
+        env = d / ".env"
+        if env.is_file():
+            for raw in env.read_text().splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                # Override empty/unset values; never clobber a real value.
+                if k and not os.environ.get(k):
+                    os.environ[k] = v
+            return env
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Pricing (USD per million tokens) — claude-haiku-4-5 family
+# ---------------------------------------------------------------------------
+# Source: Anthropic pricing page snapshot.  Update if rates change.
+# These rates are used only for the in-session cost estimate printed to the
+# user; the authoritative invoice is on the Anthropic console.
+
+MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # model_id_prefix : (input_per_mtok_usd, output_per_mtok_usd)
+    "claude-haiku-4-5":  (1.00, 5.00),
+    "claude-haiku-4":    (1.00, 5.00),
+    "claude-3-5-haiku":  (0.80, 4.00),
+    "claude-sonnet-4":   (3.00, 15.00),
+    "claude-sonnet-3-5": (3.00, 15.00),
+    "claude-opus-4":     (15.00, 75.00),
+}
+
+
+def _price_for(model: str) -> tuple[float, float]:
+    """Return (input_per_MTok, output_per_MTok) for the given model id.
+    Falls back to Haiku-4-5 pricing if unknown."""
+    m = (model or "").lower()
+    for prefix, rate in MODEL_PRICING.items():
+        if m.startswith(prefix):
+            return rate
+    return MODEL_PRICING["claude-haiku-4-5"]
 
 # Auth-mode probe registry
 # Each entry is (check_id, severity, name, payload_fn, verify_fn)
@@ -363,24 +419,31 @@ def run_authenticated_scan(
     config_path: str | None = None,
     agent_config: Any | None = None,
     require_environment: tuple[str, ...] = ("dev", "staging"),
+    budget_usd: float | None = None,
+    verbose: bool = True,
 ) -> dict:
     """
     Execute all live probes against a real agent endpoint.
 
-    This skeleton shows the integration shape. The actual implementation
-    requires a live AgentClient with a valid API key.
+    Captures per-probe token usage (input + output) and computes an
+    estimated USD cost from `MODEL_PRICING`.  When `budget_usd` is set,
+    the runner aborts before any probe that would push spend past the
+    declared budget.
 
     Returns a dict in the dashboard wire format (compatible with /api/score).
 
     Raises
     ------
-    RuntimeError if neither config_path nor agent_config is provided.
-    PermissionError if the agent's environment is not in `require_environment`.
+    RuntimeError      if neither config_path nor agent_config is provided.
+    PermissionError   if the agent's environment is not in `require_environment`.
     """
-    from acpsec.agent_client    import AgentClient
+    import anthropic
     from acpsec.config_loader   import load_config
     from acpsec.models          import CheckResult, CheckStatus, Severity
     from acpsec.scorer          import ScoringEngine
+
+    # 0. Make .env available — best-effort, idempotent.
+    _load_dotenv()
 
     # 1. Load config
     if config_path:
@@ -398,27 +461,94 @@ def run_authenticated_scan(
             f"Set agent.environment to one of: {require_environment}"
         )
 
-    # 3. Health-check the endpoint before sending probes
-    client = AgentClient(cfg)
-    if not client.health_check():
-        raise RuntimeError("Agent endpoint health check failed")
+    api_key = cfg.api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set (in .env or environment).")
 
-    # 4. Execute each probe
+    in_rate, out_rate = _price_for(cfg.model)
+    raw = anthropic.Anthropic(api_key=api_key)
+
+    def _call(payload: str) -> tuple[str, int, int]:
+        """Direct API call.  Returns (text, input_tokens, output_tokens)."""
+        msg = raw.messages.create(
+            model=cfg.model,
+            max_tokens=1024,
+            system=cfg.system_prompt,
+            messages=[{"role": "user", "content": payload}],
+        )
+        text = msg.content[0].text if msg.content else ""
+        return text, msg.usage.input_tokens, msg.usage.output_tokens
+
+    def _cost(in_tok: int, out_tok: int) -> float:
+        return (in_tok * in_rate + out_tok * out_rate) / 1_000_000
+
+    # Accumulators
+    total_in = total_out = 0
+    total_cost = 0.0
+    per_probe_meta: list[dict] = []
+
+    # 3. Health check (counts toward cost)
+    if verbose:
+        print(f"  → health check ({cfg.model})…", end="", flush=True)
+    try:
+        hc_text, hc_in, hc_out = _call("Hello. Respond with OK.")
+        hc_cost = _cost(hc_in, hc_out)
+        total_in  += hc_in
+        total_out += hc_out
+        total_cost += hc_cost
+        if verbose:
+            print(f"  ✓  {hc_in}+{hc_out} tok  (${hc_cost:.6f})")
+    except Exception as exc:
+        raise RuntimeError(f"Agent health check failed: {exc}") from exc
+
+    # 4. Execute each probe — abort early if budget would be exceeded
     results: list[dict] = []
-    for probe in ALL_PROBES:
+    for i, probe in enumerate(ALL_PROBES, 1):
+        if budget_usd is not None and total_cost > budget_usd:
+            if verbose:
+                print(f"  ✗  Budget ${budget_usd:.2f} exceeded after probe {i-1}/{len(ALL_PROBES)}. Aborting.")
+            break
+
+        t0 = time.monotonic()
+        if verbose:
+            print(f"  → [{i:2d}/{len(ALL_PROBES)}] {probe.check_id:<14s} {probe.name[:50]:<50s}", end=" ", flush=True)
         try:
-            response = client.send(probe.payload)
-            passed, evidence = _verify(probe, response)
-            results.append(_to_check_dict(probe, passed, evidence, response))
+            text, in_tok, out_tok = _call(probe.payload)
+            elapsed = time.monotonic() - t0
+            cost    = _cost(in_tok, out_tok)
+            total_in   += in_tok
+            total_out  += out_tok
+            total_cost += cost
+
+            passed, evidence = _verify(probe, text)
+            row = _to_check_dict(probe, passed, evidence, text)
+            row.update({
+                "input_tokens":  in_tok,
+                "output_tokens": out_tok,
+                "cost_usd":      round(cost, 6),
+                "elapsed_s":     round(elapsed, 2),
+            })
+            results.append(row)
+            per_probe_meta.append({
+                "check_id":      probe.check_id,
+                "passed":        passed,
+                "input_tokens":  in_tok,
+                "output_tokens": out_tok,
+                "cost_usd":      cost,
+                "elapsed_s":     elapsed,
+            })
+            if verbose:
+                status = "PASS" if passed else "FAIL"
+                print(f"{status}  {in_tok}+{out_tok}t  ${cost:.6f}  {elapsed:.1f}s")
         except Exception as exc:
             results.append(_to_check_dict(probe, False, [f"Probe error: {exc}"], ""))
+            if verbose:
+                print(f"ERROR  {exc}")
 
-    # 5. Compute aggregate score using existing ScoringEngine
+    # 5. Aggregate score with CRITICAL penalties
     score_total = sum(r["score"] for r in results)
     score_max   = sum(r["max"]   for r in results)
-
-    # Build CheckResult objects for penalty computation
-    check_objs = []
+    check_objs  = []
     for r in results:
         try:
             check_objs.append(CheckResult(
@@ -429,9 +559,19 @@ def run_authenticated_scan(
             ))
         except Exception:
             pass
-    penalised = ScoringEngine().apply_penalties(score_total, check_objs)
-    score_pct = round(penalised / score_max * 100, 1) if score_max else 0.0
+    penalised     = ScoringEngine().apply_penalties(score_total, check_objs)
+    score_pct     = round(penalised / score_max * 100, 1) if score_max else 0.0
     band, verdict = ScoringEngine().band(score_pct)
+
+    cost_report = {
+        "model":               cfg.model,
+        "input_rate_per_mtok": in_rate,
+        "output_rate_per_mtok": out_rate,
+        "total_input_tokens":  total_in,
+        "total_output_tokens": total_out,
+        "total_cost_usd":      round(total_cost, 6),
+        "per_probe":           per_probe_meta,
+    }
 
     return {
         "ok": True,
@@ -445,7 +585,8 @@ def run_authenticated_scan(
             "controls":      results,
             "source":        "auth-scanner",
             "methodology":   "live-probe",
-            "probe_count":   len(ALL_PROBES),
+            "probe_count":   len(results),
+            "cost":          cost_report,
         },
     }
 
@@ -541,13 +682,59 @@ def _recommendations_for(probe: Probe) -> list[str]:
 
 if __name__ == "__main__":
     import sys, json
+
     if len(sys.argv) < 2:
-        print("Usage: auth_scanner.py <agent.yaml>")
+        print("Usage: auth_scanner.py <agent.yaml> [budget_usd]")
         sys.exit(1)
 
+    # Load .env early so the API key is available even if the user didn't
+    # export it manually.
+    _load_dotenv()
+
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY not set")
+        print("ERROR: ANTHROPIC_API_KEY not set (.env not found or empty).")
         sys.exit(2)
 
-    out = run_authenticated_scan(config_path=sys.argv[1])
-    print(json.dumps(out, indent=2, default=str))
+    budget = float(sys.argv[2]) if len(sys.argv) > 2 else None
+
+    print()
+    print("─" * 80)
+    print(f"  ACP-SEC Authenticated Scanner  ·  config={sys.argv[1]}")
+    if budget is not None:
+        print(f"  Budget cap:  ${budget:.2f}")
+    print("─" * 80)
+
+    out = run_authenticated_scan(config_path=sys.argv[1], budget_usd=budget)
+
+    d = out["data"]
+    cost = d["cost"]
+    print()
+    print("─" * 80)
+    print(f"  Agent       :  {d['agent_name']}  ({d['agent_version']})")
+    print(f"  Final score :  {d['final_score']} / {sum(c['max'] for c in d['controls'])}   ({d['score_pct']}%)")
+    print(f"  Band        :  {d['band']}  —  {d['verdict']}")
+    print()
+
+    # Per-probe table
+    print("  " + "─" * 76)
+    print(f"  {'PROBE':<14} {'NAME':<46} {'STATUS':<6} {'COST':>10}")
+    print("  " + "─" * 76)
+    for c in d["controls"]:
+        status = c["status"].upper()
+        cost_s = f"${c.get('cost_usd', 0):.6f}"
+        print(f"  {c['ctrl']:<14} {c['name'][:45]:<46} {status:<6} {cost_s:>10}")
+    print("  " + "─" * 76)
+    print()
+    print(f"  Tokens in   :  {cost['total_input_tokens']:>8,}   @ ${cost['input_rate_per_mtok']}/MTok")
+    print(f"  Tokens out  :  {cost['total_output_tokens']:>8,}   @ ${cost['output_rate_per_mtok']}/MTok")
+    print(f"  Total cost  :  ${cost['total_cost_usd']:.6f}")
+    if budget is not None:
+        remaining = budget - cost["total_cost_usd"]
+        pct_used  = cost["total_cost_usd"] / budget * 100
+        print(f"  Budget used :  {pct_used:.4f}% of ${budget:.2f}  →  ${remaining:.4f} remaining")
+    print("─" * 80)
+
+    # Write the full result to a side-file for the dashboard
+    out_path = Path(sys.argv[1]).with_suffix(".scan.json")
+    out_path.write_text(json.dumps(out, indent=2, default=str))
+    print(f"  Full JSON   :  {out_path}")
