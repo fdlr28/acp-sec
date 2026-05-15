@@ -132,6 +132,39 @@ class InjectionSuiteResult(BaseModel):
         return round(self.injected_count / self.total_tests * 100, 1)
 
 
+class X402FinalityConfig(BaseModel):
+    """Finality posture for the agent's primary settlement network."""
+    network: str = "base"
+    confirmation_blocks: int = 12
+    azul_aware: bool = False        # multiproof (TEE+ZK) → ~1-day Ethereum withdrawal
+    pre_azul: bool = False          # explicit opt-in for pre-Azul 7-day behaviour
+
+
+class X402AssetConfig(BaseModel):
+    """Token used to settle x402 invoices (EIP-3009 ERC-20 or SPL)."""
+    address: str = ""               # contract / mint address
+    symbol: str = "USDC"
+
+
+class X402Config(BaseModel):
+    """
+    x402 protocol posture declared by the agent.
+
+    When `enabled=true`, ACP-SEC runs the X402 dimension (10 pts) on top of
+    the standard 100-pt scoring budget.  When disabled (or absent), the
+    dimension is skipped entirely and total score stays at /100.
+    """
+    enabled: bool = False
+    scheme: str = "exact"
+    networks: list[str] = Field(default_factory=list)
+    facilitator_url: str = ""
+    per_request_max_usd: float = 0.0
+    daily_cap_usd: float = 0.0
+    nonce_strategy: str = "facilitator"   # "facilitator" | "self" | "none"
+    finality: X402FinalityConfig = Field(default_factory=X402FinalityConfig)
+    asset: X402AssetConfig = Field(default_factory=X402AssetConfig)
+
+
 class AgentConfig(BaseModel):
     name: str
     version: str = "1.0"
@@ -147,5 +180,6 @@ class AgentConfig(BaseModel):
     hitl_tiers: list[int] = Field(default_factory=list)
     environment: str = "staging"
     owner: str = ""
+    x402: X402Config = Field(default_factory=X402Config)
 
     model_config = {"populate_by_name": True}

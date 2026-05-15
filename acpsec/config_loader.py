@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import AgentConfig
+from .models import AgentConfig, X402AssetConfig, X402Config, X402FinalityConfig
 
 
 _ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}")
@@ -46,6 +46,7 @@ def load_config(path: str | Path) -> AgentConfig:
     provider = data.pop("provider", {})
     security = data.pop("security", {})
     metadata = data.pop("metadata", {})
+    x402_raw = data.pop("x402", {}) or {}
 
     flat = {
         "name": data.get("name", "unknown"),
@@ -62,6 +63,32 @@ def load_config(path: str | Path) -> AgentConfig:
         "hitl_tiers": security.get("hitl_tiers", data.get("hitl_tiers", [])),
         "environment": metadata.get("environment", data.get("environment", "staging")),
         "owner": metadata.get("owner", data.get("owner", "")),
+        "x402": _build_x402_config(x402_raw),
     }
 
     return AgentConfig(**flat)
+
+
+def _build_x402_config(raw: dict) -> X402Config:
+    """Build an X402Config from the YAML `x402:` block (or defaults if empty)."""
+    finality_raw = raw.get("finality", {}) or {}
+    asset_raw = raw.get("asset", {}) or {}
+    return X402Config(
+        enabled=bool(raw.get("enabled", False)),
+        scheme=raw.get("scheme", "exact"),
+        networks=list(raw.get("networks", []) or []),
+        facilitator_url=raw.get("facilitator_url", ""),
+        per_request_max_usd=float(raw.get("per_request_max_usd", 0.0)),
+        daily_cap_usd=float(raw.get("daily_cap_usd", 0.0)),
+        nonce_strategy=raw.get("nonce_strategy", "facilitator"),
+        finality=X402FinalityConfig(
+            network=finality_raw.get("network", "base"),
+            confirmation_blocks=int(finality_raw.get("confirmation_blocks", 12)),
+            azul_aware=bool(finality_raw.get("azul_aware", False)),
+            pre_azul=bool(finality_raw.get("pre_azul", False)),
+        ),
+        asset=X402AssetConfig(
+            address=asset_raw.get("address", ""),
+            symbol=asset_raw.get("symbol", "USDC"),
+        ),
+    )
