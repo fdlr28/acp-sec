@@ -52,7 +52,9 @@ def print_assessment(result: AssessmentResult) -> None:
     console.print(
         Panel(
             f"[bold]{result.agent_name}[/bold] v{result.agent_version}\n"
-            f"Score: [{band_color}]{result.final_score:.1f} / 100[/{band_color}]  "
+            f"Score: [{band_color}]{result.final_score:.1f} / "
+            f"{result.max_score:.0f}[/{band_color}]  "
+            f"({result.score_pct:.1f}%)  "
             f"Band: [{band_color}]{result.band}[/{band_color}]\n"
             f"{result.verdict}",
             title="[bold]ACP-SEC Assessment Report[/bold]",

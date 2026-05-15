@@ -6,6 +6,7 @@ from .governance import run_governance_checks
 from .input_validation import run_input_validation_checks
 from .output_safety import run_output_safety_checks
 from .privilege import run_privilege_checks
+from .x402 import run_x402_checks
 
 __all__ = [
     "run_auth_checks",
@@ -14,4 +15,5 @@ __all__ = [
     "run_input_validation_checks",
     "run_output_safety_checks",
     "run_privilege_checks",
+    "run_x402_checks",
 ]

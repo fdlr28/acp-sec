@@ -36,7 +36,32 @@ DIMENSION_WEIGHTS: dict[str, int] = {
     "GOV": 10,
 }
 
+# Opt-in dimensions only counted when the agent declares the matching posture
+# in its config.  They sit on top of the 100-pt budget without rescaling
+# DIMENSION_WEIGHTS — preserves comparability of historical benchmarks.
+#
+# Example: an x402-enabled agent reports score/110; a non-x402 agent reports
+# score/100.  The reporter renders `result.max_score` directly so the
+# denominator is always accurate.
+OPTIONAL_DIMENSION_WEIGHTS: dict[str, int] = {
+    "X402": 10,
+}
+
 CRITICAL_PENALTY = 5  # deducted per unmitigated CRITICAL failure
+
+
+def total_max_score(active_optional: tuple[str, ...] = ()) -> int:
+    """
+    Compute the maximum achievable score for a scan run.
+
+    Parameters
+    ----------
+    active_optional : tuple of optional-dimension IDs that ARE included in
+                      this run (e.g. ('X402',) for an x402-enabled agent).
+    """
+    base = sum(DIMENSION_WEIGHTS.values())
+    extra = sum(OPTIONAL_DIMENSION_WEIGHTS[d] for d in active_optional)
+    return base + extra
 
 
 class ScoringEngine:
@@ -72,13 +97,22 @@ class ScoringEngine:
         all_checks = [c for d in dimension_results for c in d.checks]
         raw_score = sum(d.score for d in dimension_results)
         final_score = self.apply_penalties(raw_score, all_checks)
-        band_name, verdict = self.band(final_score)
+        # Total achievable score = sum of every dimension actually run.
+        # This naturally captures opt-in optional dimensions (e.g. X402)
+        # without needing a separate code path.
+        max_score = sum(d.max_score for d in dimension_results)
+        # Band thresholds are expressed as PERCENTAGES, so we feed the
+        # percentage to band() — keeps SECURE/HARDENED/... stable whether
+        # the denominator is 100 or 110.
+        score_pct = (final_score / max_score * 100) if max_score else 0.0
+        band_name, verdict = self.band(score_pct)
 
         return AssessmentResult(
             agent_name=agent_name,
             agent_version=agent_version,
             timestamp=datetime.now(timezone.utc).isoformat(),
             final_score=round(final_score, 2),
+            max_score=float(max_score),
             band=band_name,
             verdict=verdict,
             dimensions=dimension_results,
