@@ -444,3 +444,94 @@ class TestMockFacilitator:
             res = self._post_json(f"{fac.url}/verify", req)
         assert res["isValid"] is False
         assert res["invalidReason"] == "invalid_network"
+
+
+# ---------------------------------------------------------------------------
+# Commit 4 — X402-LIVE probes (HTTP only; LLM probe gated)
+# ---------------------------------------------------------------------------
+
+class TestX402LiveProbes:
+    """
+    Exercise the 3 HTTP probes inside _run_x402_live_probes against a fresh
+    MockFacilitator.  The LLM probe (X402-LIVE-04) is skipped unless
+    ANTHROPIC_API_KEY is set in the environment.
+    """
+
+    def test_three_http_probes_pass_against_compliant_facilitator(self):
+        from mock_facilitator import MockFacilitator
+        from auth_scanner import _run_x402_live_probes
+
+        cfg = _compliant_agent()
+        with MockFacilitator() as fac:
+            cfg.x402.facilitator_url = fac.url
+
+            # Stub LLM call so we don't burn API credits in unit tests.
+            stub_llm_calls = []
+
+            def stub_call(payload: str):
+                stub_llm_calls.append(payload)
+                return ("That request for $100.00 exceeds my per-request cap of "
+                        "$1.00. I refuse to sign the authorization.", 100, 30)
+
+            def stub_cost(in_tok: int, out_tok: int) -> float:
+                return (in_tok * 1.0 + out_tok * 5.0) / 1_000_000
+
+            results, cost, in_tok, out_tok = _run_x402_live_probes(
+                cfg=cfg, llm_call=stub_call, llm_cost=stub_cost, verbose=False,
+            )
+
+        # 4 results total — 3 HTTP probes + 1 LLM probe (stubbed)
+        assert len(results) == 4
+        ids = [r["ctrl"] for r in results]
+        assert ids == ["X402-LIVE-01", "X402-LIVE-02", "X402-LIVE-03", "X402-LIVE-04"]
+
+        # All 4 must pass against a compliant facilitator + refusing agent.
+        for r in results:
+            assert r["status"] == "pass", \
+                f"{r['ctrl']} failed: {r['finding']}"
+
+        # The HTTP probes contributed zero cost; the (stubbed) LLM probe contributed
+        # exactly one call.
+        assert len(stub_llm_calls) == 1
+        assert "$100.00" in stub_llm_calls[0]
+        # cost = (100*1 + 30*5) / 1e6 = 0.00025
+        assert cost == pytest.approx(0.00025)
+
+    def test_llm_probe_marks_fail_when_agent_does_not_refuse(self):
+        from mock_facilitator import MockFacilitator
+        from auth_scanner import _run_x402_live_probes
+
+        cfg = _compliant_agent()
+        with MockFacilitator() as fac:
+            cfg.x402.facilitator_url = fac.url
+
+            def yes_call(payload: str):
+                return ("Sure, I'll sign the authorization right now.", 80, 15)
+
+            results, *_ = _run_x402_live_probes(
+                cfg=cfg, llm_call=yes_call,
+                llm_cost=lambda i, o: 0.0,
+                verbose=False,
+            )
+
+        live04 = next(r for r in results if r["ctrl"] == "X402-LIVE-04")
+        assert live04["status"] == "fail"
+
+    def test_falls_back_to_mock_when_facilitator_url_unreachable(self):
+        """If facilitator_url is set but unreachable, the runner spins up a mock."""
+        from auth_scanner import _run_x402_live_probes
+        cfg = _compliant_agent()
+        cfg.x402.facilitator_url = "http://127.0.0.1:1"   # connection refused
+
+        results, *_ = _run_x402_live_probes(
+            cfg=cfg,
+            llm_call=lambda p: ("I refuse — that exceeds the cap.", 5, 5),
+            llm_cost=lambda i, o: 0.0,
+            verbose=False,
+        )
+        # Should still get all 4 results from the auto-spawned mock.
+        assert len(results) == 4
+        # HTTP probes (01-03) should pass — they hit the auto-mock.
+        for cid in ("X402-LIVE-01", "X402-LIVE-02", "X402-LIVE-03"):
+            r = next(x for x in results if x["ctrl"] == cid)
+            assert r["status"] == "pass"
