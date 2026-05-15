@@ -10,10 +10,19 @@ Layout grows as commits land:
 
 from __future__ import annotations
 
+import json
+import sys
 import tempfile
+import time
+import urllib.request
 from pathlib import Path
 
 import pytest
+
+# dashboard/ is a sibling of acpsec/, not a package — add it to sys.path.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "dashboard"))
 
 from acpsec import x402_spec
 from acpsec.checks.x402 import run_x402_checks
@@ -324,3 +333,114 @@ class TestOptInScoring:
         assert result.final_score == 25.0
         assert result.score_pct == 100.0
         assert result.band == "SECURE"
+
+
+# ---------------------------------------------------------------------------
+# Commit 3 — Mock facilitator self-tests
+# ---------------------------------------------------------------------------
+
+class TestMockFacilitator:
+    """Verify the mock facilitator implements the v1 spec correctly."""
+
+    def _post_json(self, url: str, body: dict) -> dict:
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return json.loads(r.read().decode())
+
+    def _get(self, url: str) -> dict:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            return json.loads(r.read().decode())
+
+    def test_supported_endpoint_lists_base(self):
+        from mock_facilitator import MockFacilitator
+        with MockFacilitator() as fac:
+            data = self._get(f"{fac.url}/supported")
+        assert any(k["network"] == "base" for k in data["kinds"])
+
+    def test_valid_payment_verifies(self):
+        from mock_facilitator import (
+            MockFacilitator, build_payment_payload, build_payment_requirements,
+        )
+        with MockFacilitator() as fac:
+            req = {
+                "x402Version": 1,
+                "paymentPayload": build_payment_payload(network="base"),
+                "paymentRequirements": build_payment_requirements(network="base"),
+            }
+            res = self._post_json(f"{fac.url}/verify", req)
+        assert res["isValid"] is True
+        assert res["payer"].startswith("0x")
+
+    def test_bad_signature_rejected(self):
+        from mock_facilitator import (
+            MockFacilitator, build_payment_payload, build_payment_requirements,
+        )
+        bad_sig = "0xdeadbeef"   # too short
+        with MockFacilitator() as fac:
+            req = {
+                "x402Version": 1,
+                "paymentPayload": build_payment_payload(
+                    network="base", signature=bad_sig,
+                ),
+                "paymentRequirements": build_payment_requirements(network="base"),
+            }
+            res = self._post_json(f"{fac.url}/verify", req)
+        assert res["isValid"] is False
+        assert res["invalidReason"] == "invalid_exact_evm_payload_signature"
+
+    def test_nonce_replay_on_settle_is_rejected(self):
+        from mock_facilitator import (
+            MockFacilitator, build_payment_payload, build_payment_requirements,
+        )
+        nonce = "0x" + "c" * 64
+        with MockFacilitator() as fac:
+            req = {
+                "x402Version": 1,
+                "paymentPayload": build_payment_payload(network="base", nonce=nonce),
+                "paymentRequirements": build_payment_requirements(network="base"),
+            }
+            first = self._post_json(f"{fac.url}/settle", req)
+            second = self._post_json(f"{fac.url}/settle", req)
+        assert first["success"] is True
+        assert second["success"] is False
+        assert second["errorReason"] == "invalid_payload"
+
+    def test_expired_authorization_rejected(self):
+        from mock_facilitator import (
+            MockFacilitator, build_payment_payload, build_payment_requirements,
+        )
+        with MockFacilitator() as fac:
+            req = {
+                "x402Version": 1,
+                "paymentPayload": build_payment_payload(
+                    network="base",
+                    valid_after=int(time.time()) - 600,
+                    valid_before=int(time.time()) - 60,   # already expired
+                ),
+                "paymentRequirements": build_payment_requirements(network="base"),
+            }
+            res = self._post_json(f"{fac.url}/verify", req)
+        assert res["isValid"] is False
+        assert res["invalidReason"] == "invalid_exact_evm_payload_authorization_valid_before"
+
+    def test_unknown_network_rejected(self):
+        from mock_facilitator import (
+            MockFacilitator, build_payment_payload, build_payment_requirements,
+        )
+        with MockFacilitator() as fac:
+            req = {
+                "x402Version": 1,
+                "paymentPayload": {
+                    "x402Version": 1, "scheme": "exact",
+                    "network": "imaginary-net",
+                    "payload": build_payment_payload(network="base")["payload"],
+                },
+                "paymentRequirements": build_payment_requirements(network="base"),
+            }
+            res = self._post_json(f"{fac.url}/verify", req)
+        assert res["isValid"] is False
+        assert res["invalidReason"] == "invalid_network"
