@@ -165,6 +165,42 @@ class X402Config(BaseModel):
     asset: X402AssetConfig = Field(default_factory=X402AssetConfig)
 
 
+class MCPAuthConfig(BaseModel):
+    """Authentication posture for an MCP server."""
+    required: bool = True                 # MCP-AUTH-01: server must require auth
+    mechanism: str = "bearer"             # bearer | api_key | oauth | mtls
+    tool_scoping: bool = False            # MCP-AUTH-02: per-user tool authorization
+
+
+class MCPAccessConfig(BaseModel):
+    """Resource access control for MCP tools."""
+    resource_isolation: bool = False      # MCP-PRIV-01: tools scoped to user resources
+    sandbox_mode: bool = False            # tools run in sandboxed environment
+
+
+class MCPAuditConfig(BaseModel):
+    """Audit logging posture for MCP calls."""
+    enabled: bool = False                 # MCP-GOV-01: audit logging active
+    log_tool_calls: bool = False          # log every tool invocation
+    log_results: bool = False             # log tool return values
+
+
+class MCPConfig(BaseModel):
+    """
+    MCP (Model Context Protocol) server posture declared by the agent.
+
+    When `enabled=true`, ACP-SEC runs the MCP dimension (10 pts) on top of
+    the standard 100-pt scoring budget.  When disabled (or absent), the
+    dimension is skipped entirely and total score stays at /100.
+    """
+    enabled: bool = False
+    server_url: str = ""
+    auth: MCPAuthConfig = Field(default_factory=MCPAuthConfig)
+    access: MCPAccessConfig = Field(default_factory=MCPAccessConfig)
+    audit: MCPAuditConfig = Field(default_factory=MCPAuditConfig)
+    prompt_injection_protection: bool = False  # MCP-INJ-01
+
+
 class AgentConfig(BaseModel):
     name: str
     version: str = "1.0"
@@ -181,5 +217,6 @@ class AgentConfig(BaseModel):
     environment: str = "staging"
     owner: str = ""
     x402: X402Config = Field(default_factory=X402Config)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
 
     model_config = {"populate_by_name": True}

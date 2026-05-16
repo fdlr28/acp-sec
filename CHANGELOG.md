@@ -5,6 +5,74 @@ All notable changes to ACP-SEC are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-05-17
+
+### Added — MCP Server Security Module
+
+The framework now audits agents that use the
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) for tool
+integration, ensuring MCP servers are properly secured against unauthorized
+access, prompt injection, and privilege escalation.
+
+#### New code
+- `acpsec/checks/mcp.py` — new optional dimension **MCP** (10 pts) with
+  5 static checks:
+    - **MCP-AUTH-01** (3, CRITICAL) — server authentication required (no public exposure)
+    - **MCP-AUTH-02** (2, HIGH) — tool authorization scoping per user
+    - **MCP-INJ-01** (2, CRITICAL) — prompt injection via tool results protection
+    - **MCP-PRIV-01** (2, HIGH) — resource access control (isolation + sandbox)
+    - **MCP-GOV-01** (1, MEDIUM) — audit logging for MCP calls
+- `acpsec/models.py` — `MCPConfig`, `MCPAuthConfig`, `MCPAccessConfig`,
+  `MCPAuditConfig` pydantic blocks; `AgentConfig.mcp` field defaults to disabled.
+- `acpsec/config_loader.py` — parses the top-level `mcp:` YAML block.
+- `dashboard/mock_mcp_server.py` — stdlib-only mock MCP server with
+  authentication, tool scoping, resource isolation, and audit logging.
+- `examples/mcp_agent_compliant.yaml` — positive control, scores **10/10 SECURE**.
+- `examples/mcp_agent_misconfigured.yaml` — negative control, scores **0/10
+  COMPROMISED** with 5 failures.
+
+### Added — Continuous Monitoring
+
+New monitoring module for tracking agent security posture over time.
+
+#### New code
+- `acpsec/monitor.py` — SQLite-backed monitoring with:
+    - Watchlist management (add/remove agents)
+    - Scheduled scans: hourly/daily/weekly
+    - Score drift detection (alert if score drops >10 pts)
+    - Historical score tracking
+    - Webhook notifications (Discord/Telegram/Slack)
+    - ACP-SEC Trust Index — rolling average score
+- `dashboard/monitor_dashboard.html` — live dashboard with:
+    - Watchlist with current scores
+    - Score history chart per agent
+    - Drift alerts panel
+    - Add agent to watchlist form
+- CLI commands:
+    - `acpsec monitor add <url> --schedule daily`
+    - `acpsec monitor list`
+    - `acpsec monitor run` (manual trigger all due agents)
+    - `acpsec monitor history <url>`
+
+#### CLI
+- `acpsec check --mcp` runs only the MCP dimension.
+- `acpsec check --skip-mcp` force-skips the dimension even when enabled.
+- `acpsec --version` now reports `0.3.0`.
+
+#### Scoring model
+- `OPTIONAL_DIMENSION_WEIGHTS` now includes `{"MCP": 10}` alongside `{"X402": 10}`.
+- Agents with `mcp.enabled: true` score out of **110** (or **120** if both
+  MCP and x402 are enabled).
+
+### Tests
+- New `tests/test_mcp.py` with 26 tests covering all 5 MCP static checks,
+  config parsing, scoring integration, and mock MCP server self-tests.
+- New `tests/test_monitor.py` with 30 tests covering watchlist management,
+  score history, trust index, drift detection, and scheduled scans.
+- Total: **118 tests passing** (62 original + 26 MCP + 30 monitor).
+
+---
+
 ## [0.2.0] — 2026-05-15
 
 ### Added — x402 Compliance Module

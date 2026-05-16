@@ -303,7 +303,7 @@ class TestX402Checks:
 
 class TestOptInScoring:
     def test_optional_dimension_weights_table(self):
-        assert OPTIONAL_DIMENSION_WEIGHTS == {"X402": 10}
+        assert OPTIONAL_DIMENSION_WEIGHTS == {"X402": 10, "MCP": 10}
 
     def test_total_max_score_without_optional(self):
         assert total_max_score() == 100

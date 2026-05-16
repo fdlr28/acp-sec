@@ -45,6 +45,7 @@ DIMENSION_WEIGHTS: dict[str, int] = {
 # denominator is always accurate.
 OPTIONAL_DIMENSION_WEIGHTS: dict[str, int] = {
     "X402": 10,
+    "MCP": 10,
 }
 
 CRITICAL_PENALTY = 5  # deducted per unmitigated CRITICAL failure

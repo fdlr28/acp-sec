@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ACP-SEC Monitor — Continuous Agent Watchlist</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <style>
+    /* ── Reset & tokens ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-primary:    #ffffff;
+      --bg-secondary:  #f8f7f4;
+      --bg-tertiary:   #efefeb;
+      --text-primary:  #1a1a18;
+      --text-secondary:#6b6a66;
+      --text-tertiary: #9a9995;
+      --border:        #d9d7ce;
+      --border-light:  #efefeb;
+
+      --accent-danger: #e24b4a;
+      --accent-warning:#ba7517;
+      --accent-info:   #378add;
+      --accent-success:#639922;
+      --accent-amber:  #ef9f27;
+      --accent-purple: #7f77dd;
+      --accent-teal:   #1d9e75;
+
+      --danger-light:  #fcebeb;
+      --warning-light: #faeeda;
+      --info-light:    #e6f1fb;
+    }
+
+    body.dark-mode {
+      --bg-primary:    #1a1a18;
+      --bg-secondary:  #2c2c2a;
+      --bg-tertiary:   #3d3d3a;
+      --text-primary:  #e8e6dc;
+      --text-secondary:#a8a5a0;
+      --text-tertiary: #7d7a75;
+      --border:        #4a4844;
+      --border-light:  #3d3d3a;
+      --danger-light:  #501313;
+      --warning-light: #412402;
+      --info-light:    #042c53;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────────── */
+    header {
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border);
+      padding: 1.5rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    header h1 span { color: var(--accent-info); }
+    .header-controls { display: flex; gap: 0.75rem; align-items: center; }
+    .btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: var(--bg-tertiary); }
+    .btn-primary {
+      background: var(--accent-info);
+      color: #fff;
+      border-color: var(--accent-info);
+    }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-danger {
+      background: var(--accent-danger);
+      color: #fff;
+      border-color: var(--accent-danger);
+    }
+
+    /* ── Layout ────────────────────────────────────────────────────────────── */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+      display: grid;
+      gap: 1.5rem;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 768px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    /* ── Cards ─────────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .card-body { padding: 1.25rem; }
+
+    /* ── Stats ─────────────────────────────────────────────────────────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+    }
+    @media (max-width: 768px) {
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+    }
+    .stat-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.25rem;
+    }
+
+    /* ── Table ─────────────────────────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-light);
+      font-size: 0.9rem;
+    }
+    th {
+      font-weight: 600;
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover { background: var(--bg-secondary); }
+
+    /* ── Badges ────────────────────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-success { background: var(--danger-light); color: var(--accent-success); }
+    .badge-warning { background: var(--warning-light); color: var(--accent-warning); }
+    .badge-danger  { background: var(--danger-light); color: var(--accent-danger); }
+    .badge-info    { background: var(--info-light);    color: var(--accent-info); }
+    .badge-purple  { background: var(--info-light);    color: var(--accent-purple); }
+
+    /* ── Score bar ─────────────────────────────────────────────────────────── */
+    .score-bar {
+      width: 80px;
+      height: 6px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+      overflow: hidden;
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 0.5rem;
+    }
+    .score-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s;
+    }
+
+    /* ── Alert panel ───────────────────────────────────────────────────────── */
+    .alert {
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .alert-danger  { background: var(--danger-light); color: var(--accent-danger); border-left: 3px solid var(--accent-danger); }
+    .alert-warning { background: var(--warning-light); color: var(--accent-warning); border-left: 3px solid var(--accent-warning); }
+    .alert-info    { background: var(--info-light);    color: var(--accent-info);    border-left: 3px solid var(--accent-info); }
+
+    /* ── Chart container ───────────────────────────────────────────────────── */
+    .chart-container {
+      position: relative;
+      height: 250px;
+    }
+
+    /* ── Form ──────────────────────────────────────────────────────────────── */
+    .form-row {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      align-items: end;
+    }
+    .form-group { flex: 1; }
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.3rem;
+    }
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+    }
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: var(--accent-info);
+      box-shadow: 0 0 0 2px rgba(55, 138, 221, 0.15);
+    }
+
+    /* ── Empty state ───────────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-tertiary);
+    }
+    .empty-state p { margin-top: 0.5rem; font-size: 0.9rem; }
+
+    /* ── Footer ────────────────────────────────────────────────────────────── */
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--text-tertiary);
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span>ACP-SEC</span> Monitor</h1>
+    <div class="header-controls">
+      <button class="btn" onclick="toggleDark()">Dark Mode</button>
+      <button class="btn btn-primary" onclick="runAllScans()">Run All Scans</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Stats row -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-agents">0</div>
+        <div class="stat-label">Agents Watched</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-avg-score">—</div>
+        <div class="stat-label">Avg Score</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-alerts">0</div>
+        <div class="stat-label">Drift Alerts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-trust-index">—</div>
+        <div class="stat-label">Trust Index</div>
+      </div>
+    </div>
+
+    <!-- Add agent form -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Add Agent to Watchlist</h2>
+      </div>
+      <div class="card-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="agent-url">Agent Config URL or Path</label>
+            <input type="text" id="agent-url" placeholder="https://example.com/agent.yaml or /path/to/agent.yaml">
+          </div>
+          <div class="form-group" style="max-width: 180px;">
+            <label for="agent-schedule">Schedule</label>
+            <select id="agent-schedule">
+              <option value="hourly">Hourly</option>
+              <option value="daily" selected>Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+          <div style="padding-top: 1.4rem;">
+            <button class="btn btn-primary" onclick="addAgent()">Add Agent</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Watchlist table -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Watchlist</h2>
+        <span class="badge badge-info" id="watchlist-count">0 agents</span>
+      </div>
+      <div class="card-body">
+        <div id="watchlist-empty" class="empty-state">
+          <p>No agents on the watchlist yet. Add one above.</p>
+        </div>
+        <table id="watchlist-table" style="display: none;">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Schedule</th>
+              <th>Last Score</th>
+              <th>Trust Index</th>
+              <th>Last Scan</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="watchlist-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Charts and Alerts -->
+    <div class="grid-2">
+      <!-- Score History Chart -->
+      <div class="card">
+        <div class="card-header">
+          <h2>Score History</h2>
+          <select id="chart-agent" onchange="updateChart()" style="padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 0.85rem;">
+            <option value="">Select agent...</option>
+          </select>
+        </div>
+        <div class="card-body">
+          <div class="chart-container">
+            <canvas id="scoreChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Drift Alerts -->
+      <div class="card">
+        <div class="card-header">
+          <h2>Drift Alerts</h2>
+          <span class="badge badge-danger" id="alert-count">0 alerts</span>
+        </div>
+        <div class="card-body">
+          <div id="alerts-empty" class="empty-state">
+            <p>No drift alerts. All scores are stable.</p>
+          </div>
+          <div id="alerts-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    ACP-SEC Monitor v0.3.0 &mdash; AI Agent Commerce Protocol Security Framework
+  </footer>
+
+  <script>
+    // ── State ───────────────────────────────────────────────────────────────
+    let watchlist = [];
+    let alerts = [];
+    let scoreHistory = {};
+    let scoreChart = null;
+
+    // ── Init ────────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      loadData();
+      initChart();
+      render();
+    });
+
+    function loadData() {
+      // Load from localStorage (persists across page refreshes)
+      const stored = localStorage.getItem('acpsec_monitor');
+      if (stored) {
+        const data = JSON.parse(stored);
+        watchlist = data.watchlist || [];
+        alerts = data.alerts || [];
+        scoreHistory = data.scoreHistory || {};
+      }
+    }
+
+    function saveData() {
+      localStorage.setItem('acpsec_monitor', JSON.stringify({
+        watchlist,
+        alerts,
+        scoreHistory
+      }));
+    }
+
+    // ── Rendering ───────────────────────────────────────────────────────────
+    function render() {
+      renderStats();
+      renderWatchlist();
+      renderAlerts();
+      updateChartSelector();
+    }
+
+    function renderStats() {
+      document.getElementById('stat-agents').textContent = watchlist.length;
+      document.getElementById('stat-alerts').textContent = alerts.length;
+
+      if (watchlist.length > 0) {
+        const scores = watchlist.filter(a => a.lastScore !== null).map(a => a.lastScore);
+        if (scores.length > 0) {
+          const avg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
+          document.getElementById('stat-avg-score').textContent = avg;
+        }
+        // Trust index = average of all rolling averages
+        const trustScores = watchlist
+          .map(a => getTrustIndex(a.url))
+          .filter(t => t !== null);
+        if (trustScores.length > 0) {
+          const ti = (trustScores.reduce((a, b) => a + b, 0) / trustScores.length).toFixed(1);
+          document.getElementById('stat-trust-index').textContent = ti;
+        }
+      }
+    }
+
+    function renderWatchlist() {
+      const empty = document.getElementById('watchlist-empty');
+      const table = document.getElementById('watchlist-table');
+      const body = document.getElementById('watchlist-body');
+      const count = document.getElementById('watchlist-count');
+
+      count.textContent = `${watchlist.length} agent${watchlist.length !== 1 ? 's' : ''}`;
+
+      if (watchlist.length === 0) {
+        empty.style.display = 'block';
+        table.style.display = 'none';
+        return;
+      }
+
+      empty.style.display = 'none';
+      table.style.display = 'table';
+      body.innerHTML = '';
+
+      watchlist.forEach(agent => {
+        const trustIdx = getTrustIndex(agent.url);
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>
+            <strong>${escapeHtml(agent.url)}</strong>
+          </td>
+          <td><span class="badge badge-purple">${agent.schedule}</span></td>
+          <td>
+            ${agent.lastScore !== null
+              ? `${agent.lastScore} <div class="score-bar"><div class="score-bar-fill" style="width: ${agent.lastScore}%; background: ${scoreColor(agent.lastScore)}"></div></div>`
+              : '<span style="color: var(--text-tertiary)">—</span>'}
+          </td>
+          <td>${trustIdx !== null ? trustIdx : '—'}</td>
+          <td>${agent.lastScan ? timeAgo(agent.lastScan) : 'Never'}</td>
+          <td>
+            <button class="btn" onclick="scanAgent('${escapeAttr(agent.url)}')" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">Scan</button>
+            <button class="btn btn-danger" onclick="removeAgent('${escapeAttr(agent.url)}')" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">Remove</button>
+          </td>
+        `;
+        body.appendChild(row);
+      });
+    }
+
+    function renderAlerts() {
+      const empty = document.getElementById('alerts-empty');
+      const list = document.getElementById('alerts-list');
+      const count = document.getElementById('alert-count');
+
+      count.textContent = `${alerts.length} alert${alerts.length !== 1 ? 's' : ''}`;
+
+      if (alerts.length === 0) {
+        empty.style.display = 'block';
+        list.innerHTML = '';
+        return;
+      }
+
+      empty.style.display = 'none';
+      list.innerHTML = '';
+
+      alerts.slice(0, 10).forEach(alert => {
+        const div = document.createElement('div');
+        div.className = 'alert alert-danger';
+        div.innerHTML = `
+          <span>
+            <strong>${escapeHtml(alert.url)}</strong> — Score dropped
+            <strong>${alert.oldScore}</strong> → <strong>${alert.newScore}</strong>
+            (−${alert.delta.toFixed(1)} pts)
+          </span>
+          <span style="font-size: 0.75rem; color: var(--text-tertiary);">${timeAgo(alert.timestamp)}</span>
+        `;
+        list.appendChild(div);
+      });
+    }
+
+    // ── Actions ─────────────────────────────────────────────────────────────
+    function addAgent() {
+      const url = document.getElementById('agent-url').value.trim();
+      const schedule = document.getElementById('agent-schedule').value;
+      if (!url) return;
+
+      if (watchlist.find(a => a.url === url)) {
+        alert('Agent already on watchlist.');
+        return;
+      }
+
+      watchlist.push({
+        url,
+        schedule,
+        addedAt: Date.now(),
+        lastScan: null,
+        lastScore: null
+      });
+
+      document.getElementById('agent-url').value = '';
+      saveData();
+      render();
+    }
+
+    function removeAgent(url) {
+      watchlist = watchlist.filter(a => a.url !== url);
+      delete scoreHistory[url];
+      alerts = alerts.filter(a => a.url !== url);
+      saveData();
+      render();
+    }
+
+    function scanAgent(url) {
+      // Simulate a scan (in production, this would call the ACP-SEC scanner)
+      const agent = watchlist.find(a => a.url === url);
+      if (!agent) return;
+
+      const prevScore = agent.lastScore;
+      const newScore = Math.floor(Math.random() * 40) + 60; // 60-100 range
+      agent.lastScore = newScore;
+      agent.lastScan = Date.now();
+
+      // Record in history
+      if (!scoreHistory[url]) scoreHistory[url] = [];
+      scoreHistory[url].push({ score: newScore, timestamp: Date.now() });
+
+      // Check for drift
+      if (prevScore !== null && prevScore - newScore > 10) {
+        alerts.unshift({
+          url,
+          oldScore: prevScore,
+          newScore,
+          delta: prevScore - newScore,
+          timestamp: Date.now()
+        });
+      }
+
+      saveData();
+      render();
+    }
+
+    function runAllScans() {
+      watchlist.forEach(agent => scanAgent(agent.url));
+    }
+
+    // ── Chart ───────────────────────────────────────────────────────────────
+    function initChart() {
+      const ctx = document.getElementById('scoreChart').getContext('2d');
+      scoreChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: 'Score',
+            data: [],
+            borderColor: '#378add',
+            backgroundColor: 'rgba(55, 138, 221, 0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointBackgroundColor: '#378add',
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              ticks: { color: '#6b6a66' },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            x: {
+              ticks: { color: '#6b6a66' },
+              grid: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          }
+        }
+      });
+    }
+
+    function updateChartSelector() {
+      const select = document.getElementById('chart-agent');
+      const current = select.value;
+      select.innerHTML = '<option value="">Select agent...</option>';
+      watchlist.forEach(agent => {
+        const opt = document.createElement('option');
+        opt.value = agent.url;
+        opt.textContent = agent.url;
+        if (agent.url === current) opt.selected = true;
+        select.appendChild(opt);
+      });
+    }
+
+    function updateChart() {
+      const url = document.getElementById('chart-agent').value;
+      if (!url || !scoreHistory[url]) {
+        scoreChart.data.labels = [];
+        scoreChart.data.datasets[0].data = [];
+        scoreChart.update();
+        return;
+      }
+
+      const history = scoreHistory[url].slice(-20); // Last 20 entries
+      scoreChart.data.labels = history.map(h => new Date(h.timestamp).toLocaleDateString());
+      scoreChart.data.datasets[0].data = history.map(h => h.score);
+      scoreChart.update();
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function getTrustIndex(url) {
+      const history = scoreHistory[url];
+      if (!history || history.length === 0) return null;
+      const window = history.slice(-5);
+      return (window.reduce((a, b) => a + b.score, 0) / window.length).toFixed(1);
+    }
+
+    function scoreColor(score) {
+      if (score >= 90) return '#639922';
+      if (score >= 70) return '#378add';
+      if (score >= 50) return '#ba7517';
+      return '#e24b4a';
+    }
+
+    function timeAgo(ts) {
+      const seconds = Math.floor((Date.now() - ts) / 1000);
+      if (seconds < 60) return 'Just now';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      return `${Math.floor(seconds / 86400)}d ago`;
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function escapeAttr(str) {
+      return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    function toggleDark() {
+      document.body.classList.toggle('dark-mode');
+    }
+  </script>
+</body>
+</html>

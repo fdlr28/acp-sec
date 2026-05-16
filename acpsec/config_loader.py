@@ -8,7 +8,16 @@ from pathlib import Path
 
 import yaml
 
-from .models import AgentConfig, X402AssetConfig, X402Config, X402FinalityConfig
+from .models import (
+    AgentConfig,
+    MCPAccessConfig,
+    MCPAuditConfig,
+    MCPAuthConfig,
+    MCPConfig,
+    X402AssetConfig,
+    X402Config,
+    X402FinalityConfig,
+)
 
 
 _ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}")
@@ -47,6 +56,7 @@ def load_config(path: str | Path) -> AgentConfig:
     security = data.pop("security", {})
     metadata = data.pop("metadata", {})
     x402_raw = data.pop("x402", {}) or {}
+    mcp_raw = data.pop("mcp", {}) or {}
 
     flat = {
         "name": data.get("name", "unknown"),
@@ -64,6 +74,7 @@ def load_config(path: str | Path) -> AgentConfig:
         "environment": metadata.get("environment", data.get("environment", "staging")),
         "owner": metadata.get("owner", data.get("owner", "")),
         "x402": _build_x402_config(x402_raw),
+        "mcp": _build_mcp_config(mcp_raw),
     }
 
     return AgentConfig(**flat)
@@ -91,4 +102,30 @@ def _build_x402_config(raw: dict) -> X402Config:
             address=asset_raw.get("address", ""),
             symbol=asset_raw.get("symbol", "USDC"),
         ),
+    )
+
+
+def _build_mcp_config(raw: dict) -> MCPConfig:
+    """Build an MCPConfig from the YAML `mcp:` block (or defaults if empty)."""
+    auth_raw = raw.get("auth", {}) or {}
+    access_raw = raw.get("access", {}) or {}
+    audit_raw = raw.get("audit", {}) or {}
+    return MCPConfig(
+        enabled=bool(raw.get("enabled", False)),
+        server_url=raw.get("server_url", ""),
+        auth=MCPAuthConfig(
+            required=bool(auth_raw.get("required", True)),
+            mechanism=auth_raw.get("mechanism", "bearer"),
+            tool_scoping=bool(auth_raw.get("tool_scoping", False)),
+        ),
+        access=MCPAccessConfig(
+            resource_isolation=bool(access_raw.get("resource_isolation", False)),
+            sandbox_mode=bool(access_raw.get("sandbox_mode", False)),
+        ),
+        audit=MCPAuditConfig(
+            enabled=bool(audit_raw.get("enabled", False)),
+            log_tool_calls=bool(audit_raw.get("log_tool_calls", False)),
+            log_results=bool(audit_raw.get("log_results", False)),
+        ),
+        prompt_injection_protection=bool(raw.get("prompt_injection_protection", False)),
     )

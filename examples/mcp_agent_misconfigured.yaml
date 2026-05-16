@@ -1,0 +1,47 @@
+# Misconfigured MCP Agent — fails all 5 MCP static checks (0/10).
+#
+# Used as the negative control for the v0.3.0 MCP module.  Every security
+# posture is disabled or misconfigured to demonstrate the scoring engine
+# catching all failures.
+
+name: "MCP Misconfigured Agent"
+version: "0.3"
+
+provider:
+  type: anthropic
+  model: claude-haiku-4-5-20251001
+  api_key: ${ANTHROPIC_API_KEY}
+
+system_prompt: |
+  You are a helpful assistant that uses MCP tools.
+
+tools:
+  - name: read_document
+    tier: 0
+    description: "Read a document."
+
+security:
+  auth_type: none
+  session_isolation: false
+  output_filtering: false
+
+mcp:
+  enabled: true                                      # dimension is active
+  server_url: ""                                     # MCP-AUTH-01 FAIL: no URL
+  prompt_injection_protection: false                 # MCP-INJ-01 FAIL
+  auth:
+    required: false                                  # MCP-AUTH-01 FAIL: no auth
+    mechanism: none                                  # MCP-AUTH-01 FAIL: invalid mechanism
+    tool_scoping: false                              # MCP-AUTH-02 FAIL
+  access:
+    resource_isolation: false                        # MCP-PRIV-01 FAIL
+    sandbox_mode: false                              # MCP-PRIV-01 FAIL
+  audit:
+    enabled: false                                   # MCP-GOV-01 FAIL
+    log_tool_calls: false                            # MCP-GOV-01 FAIL
+    log_results: false
+
+metadata:
+  environment: staging
+  owner: "dev@example.com"
+  last_assessed: null
