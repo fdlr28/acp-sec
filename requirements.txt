@@ -1,0 +1,22 @@
+# ACP-SEC dashboard — combined runtime dependencies for Railway / Heroku-style deploy.
+#
+# Installs:
+#   - the local acpsec package (editable, picks up everything in pyproject.toml)
+#   - the dashboard's extra requirements (Flask, requests, beautifulsoup4)
+#
+# Keep this file as the single source of truth for production deploys.
+# pyproject.toml + dashboard/requirements.txt remain for local-dev workflows.
+
+# Editable install of the acpsec library — pulls anthropic, click, pydantic,
+# pyyaml, httpx, jinja2, rich from pyproject.toml's [project.dependencies].
+-e .
+
+# Dashboard-only runtime extras.
+flask>=3.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Production WSGI server.  Werkzeug's dev server is fine on a single Railway
+# dyno for the demo, but having gunicorn available means we can swap to it
+# trivially by editing the Procfile if traffic grows.
+gunicorn>=22.0

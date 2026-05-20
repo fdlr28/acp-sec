@@ -249,6 +249,41 @@ def scanner_page():
     return send_file(SCANNER_HTML)
 
 
+@app.get("/api/health")
+def health():
+    """Lightweight liveness probe — used by Railway healthchecks and uptime monitors."""
+    return jsonify({
+        "ok": True,
+        "service": "acp-sec-dashboard",
+        "acpsec_available": bool(ACPSEC_AVAILABLE),
+        "scanner_protected": bool(os.environ.get("SCANNER_TOKEN")),
+    }), 200
+
+
+def _require_scanner_token() -> tuple[dict, int] | None:
+    """Gate the scanner endpoints with a shared secret when SCANNER_TOKEN is set.
+
+    On a public Railway URL the heuristic scanner becomes a free SSRF
+    relay if left open — every request kicks off ~10 parallel HTTP fetches
+    against an attacker-chosen target.  When SCANNER_TOKEN is set in the
+    environment, requests must echo it in the X-Scanner-Token header.
+
+    Returns None when the request is allowed.  Returns (body, status) when
+    the caller should short-circuit with that JSON response.
+    """
+    required = os.environ.get("SCANNER_TOKEN", "").strip()
+    if not required:
+        # No token configured → endpoints behave exactly as in dev (open).
+        return None
+    sent = request.headers.get("X-Scanner-Token", "").strip()
+    if not sent or sent != required:
+        return (
+            {"ok": False, "error": "scanner endpoint requires X-Scanner-Token header"},
+            401,
+        )
+    return None
+
+
 @app.post("/api/scanner/lookup")
 def scanner_lookup():
     """Scrape basic X/Twitter profile info via Nitter.
@@ -256,6 +291,9 @@ def scanner_lookup():
     Request body: { "username": "@agentname" }
     Returns: { ok, data: { username, display_name, bio, website, avatar_url, source, error } }
     """
+    gate = _require_scanner_token()
+    if gate is not None:
+        return jsonify(gate[0]), gate[1]
     if not request.is_json:
         return jsonify({"error": "Content-Type must be application/json"}), 415
     payload  = request.get_json(force=True)
@@ -278,6 +316,9 @@ def scanner_scan():
     Request body: { "url": "https://...", "agent_name": "...", "username": "@..." }
     Returns: { ok, data: <dashboard wire format> } or { ok: false, error }
     """
+    gate = _require_scanner_token()
+    if gate is not None:
+        return jsonify(gate[0]), gate[1]
     if not request.is_json:
         return jsonify({"error": "Content-Type must be application/json"}), 415
     payload    = request.get_json(force=True)
@@ -490,4 +531,7 @@ if __name__ == "__main__":
     pkg_status = "acpsec package active ✓" if ACPSEC_AVAILABLE else "acpsec package NOT installed (fallback mode)"
     print(f"  {pkg_status}")
     print(f"\n  ACP-SEC Dashboard → http://localhost:{PORT}\n")
-    app.run(host="0.0.0.0", port=PORT, debug=True)
+    # Production hardening: never expose the Werkzeug debugger on a public
+    # host.  Opt in to debug ONLY when FLASK_ENV is left unset / "development".
+    is_prod = os.environ.get("FLASK_ENV", "").lower() == "production"
+    app.run(host="0.0.0.0", port=PORT, debug=not is_prod)
