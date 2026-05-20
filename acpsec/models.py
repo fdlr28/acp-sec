@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class Severity(str, Enum):
+    """Severity level of a security finding."""
     CRITICAL = "CRITICAL"
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
@@ -17,6 +18,7 @@ class Severity(str, Enum):
 
 
 class CheckStatus(str, Enum):
+    """Outcome of a single security check."""
     PASS = "pass"
     FAIL = "fail"
     WARN = "warn"
@@ -25,6 +27,7 @@ class CheckStatus(str, Enum):
 
 
 class ToolTier(int, Enum):
+    """Risk tier of a tool, from read-only to critical."""
     READ_ONLY = 0
     WRITE = 1
     DESTRUCTIVE = 2
@@ -32,12 +35,14 @@ class ToolTier(int, Enum):
 
 
 class FindingStatus(str, Enum):
+    """Lifecycle status of a security finding."""
     OPEN = "open"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
 
 
 class CheckResult(BaseModel):
+    """Result of a single security check."""
     check_id: str
     name: str
     dimension: str
@@ -51,16 +56,20 @@ class CheckResult(BaseModel):
 
     @property
     def passed(self) -> bool:
+        """Whether the check passed."""
         return self.status == CheckStatus.PASS
 
     @property
     def score_pct(self) -> float:
+        """Score as a percentage of maximum possible."""
         if self.max_score == 0:
             return 0.0
         return round(self.score / self.max_score * 100, 1)
 
 
 class DimensionResult(BaseModel):
+    """Aggregated results for a single security dimension."""
+    dimension_id: str
     dimension_id: str
     name: str
     score: float
@@ -69,12 +78,14 @@ class DimensionResult(BaseModel):
 
     @property
     def score_pct(self) -> float:
+        """Dimension score as a percentage of maximum possible."""
         if self.max_score == 0:
             return 0.0
         return round(self.score / self.max_score * 100, 1)
 
     @property
     def critical_failures(self) -> list[CheckResult]:
+        """All CRITICAL-severity checks that failed."""
         return [
             c for c in self.checks
             if c.severity == Severity.CRITICAL and c.status == CheckStatus.FAIL
@@ -82,6 +93,7 @@ class DimensionResult(BaseModel):
 
 
 class AssessmentResult(BaseModel):
+    """Complete security assessment for an agent."""
     agent_name: str
     agent_version: str
     timestamp: str
@@ -94,18 +106,23 @@ class AssessmentResult(BaseModel):
 
     @property
     def score_pct(self) -> float:
+        """Final score as a percentage of maximum possible."""
         return round(self.final_score / self.max_score * 100, 1)
 
     @property
     def all_checks(self) -> list[CheckResult]:
+        """Flatten all checks across all dimensions."""
         return [c for d in self.dimensions for c in d.checks]
 
     @property
     def critical_failures(self) -> list[CheckResult]:
+        """All CRITICAL-severity checks that failed."""
         return [c for c in self.all_checks if c.severity == Severity.CRITICAL and not c.passed]
 
 
 class InjectionResult(BaseModel):
+    """Result of a single injection test."""
+    test_id: str
     test_id: str
     category: str
     payload: str
@@ -118,6 +135,7 @@ class InjectionResult(BaseModel):
 
 
 class InjectionSuiteResult(BaseModel):
+    """Aggregate results of an injection test suite."""
     agent_name: str
     timestamp: str
     total_tests: int
@@ -127,6 +145,7 @@ class InjectionSuiteResult(BaseModel):
 
     @property
     def injection_rate(self) -> float:
+        """Percentage of tests that resulted in injection."""
         if self.total_tests == 0:
             return 0.0
         return round(self.injected_count / self.total_tests * 100, 1)
@@ -202,6 +221,7 @@ class MCPConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
+    """Configuration for an AI agent under assessment."""
     name: str
     version: str = "1.0"
     provider_type: str = Field(alias="provider_type", default="anthropic")
