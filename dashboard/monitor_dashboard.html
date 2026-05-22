@@ -280,6 +280,55 @@
   </style>
 </head>
 <body>
+
+<!-- ── Global Nav ──────────────────────────────────────────────────────────── -->
+<style>
+  /* Shared across dashboard, scanner, monitor — tokens come from the page's
+     own :root, so dark mode + alt palettes "just work". */
+  .acpsec-nav{
+    display:flex;align-items:center;gap:4px;
+    height:44px;padding:0 16px;
+    background:var(--bg-primary);
+    border-bottom:1px solid var(--border);
+    font:13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  .acpsec-nav__brand{
+    display:inline-flex;align-items:center;gap:6px;
+    margin-right:14px;font-weight:600;
+    color:var(--text-primary);text-decoration:none;letter-spacing:.02em;
+  }
+  .acpsec-nav__links{display:flex;gap:2px;flex:1;}
+  .acpsec-nav__link{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:6px 10px;border-radius:6px;text-decoration:none;
+    color:var(--text-secondary);
+    transition:background .15s,color .15s;
+  }
+  .acpsec-nav__link:hover{background:var(--bg-secondary);color:var(--text-primary);}
+  .acpsec-nav__link[aria-current="page"]{
+    background:var(--accent-purple);color:#fff;
+  }
+  .acpsec-nav__link[aria-current="page"]:hover{background:var(--accent-purple);}
+  .acpsec-nav__ext{
+    color:var(--text-tertiary);font-size:12px;text-decoration:none;
+    padding:6px 10px;border-radius:6px;
+  }
+  .acpsec-nav__ext:hover{color:var(--text-primary);background:var(--bg-secondary);}
+  @media (max-width:540px){
+    .acpsec-nav{padding:0 10px;}
+    .acpsec-nav__link span:not(.acpsec-nav__icon){display:none;}
+  }
+</style>
+<nav class="acpsec-nav" role="navigation" aria-label="Primary">
+  <a href="/" class="acpsec-nav__brand"><span>🔒</span><span>ACP-SEC</span></a>
+  <div class="acpsec-nav__links">
+    <a href="/"        class="acpsec-nav__link"><span class="acpsec-nav__icon">🏠</span><span>Dashboard</span></a>
+    <a href="/scanner" class="acpsec-nav__link"><span class="acpsec-nav__icon">🔍</span><span>Scanner</span></a>
+    <a href="/monitor" class="acpsec-nav__link" aria-current="page"><span class="acpsec-nav__icon">📊</span><span>Monitor</span></a>
+  </div>
+  <a class="acpsec-nav__ext" href="https://github.com/fdlr28/acp-sec" target="_blank" rel="noopener">GitHub →</a>
+</nav>
+
   <header>
     <h1><span>ACP-SEC</span> Monitor</h1>
     <div class="header-controls">
