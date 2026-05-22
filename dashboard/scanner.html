@@ -363,6 +363,22 @@
     .score-number { font-size: 3rem; font-weight: 800; letter-spacing: -.05em; line-height: 1; }
     .score-label  { font-size: 0.68rem; color: var(--text-tertiary); font-weight: 500; }
     .score-meta { display: flex; flex-direction: column; gap: 0.75rem; }
+    .score-agent-row {
+      display: flex; align-items: center; gap: 0.7rem;
+    }
+    /* Smaller cousin of .profile-avatar used in the results hero. */
+    .score-avatar {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: var(--bg-tertiary);
+      border: 1.5px solid var(--border);
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem;
+      color: var(--text-tertiary);
+      overflow: hidden;
+    }
+    .score-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
     .score-agent  { font-size: 1.3rem; font-weight: 700; }
     .score-handle { font-size: 0.84rem; color: var(--text-tertiary); }
     .score-band   {
@@ -832,9 +848,12 @@
         </div>
         <!-- Text meta -->
         <div class="score-meta">
-          <div>
-            <div class="score-agent" id="resAgentName">—</div>
-            <div class="score-handle" id="resHandle"></div>
+          <div class="score-agent-row">
+            <div class="score-avatar" id="resAvatarWrap" aria-hidden="true">🤖</div>
+            <div>
+              <div class="score-agent" id="resAgentName">—</div>
+              <div class="score-handle" id="resHandle"></div>
+            </div>
           </div>
           <div class="score-band" id="resBand">—</div>
           <div class="score-verdict" id="resVerdict"></div>
@@ -990,13 +1009,45 @@ async function lookupProfile() {
   }
 }
 
+// ─── Avatar rendering ─────────────────────────────────────────────────────
+//
+// We display X/Twitter profile pictures by proxying through unavatar.io:
+//   https://unavatar.io/twitter/<username>
+//
+// `?fallback=false` is critical — without it the service ALWAYS returns 200
+// with a generic placeholder image, which means our <img onerror> handler
+// never fires and we can't gracefully fall back to the 🤖 emoji.  With
+// fallback=false, unavatar returns a 404 when no avatar exists, the image
+// fails to load, and onerror restores the emoji.
+//
+// Set username = null/empty to skip the network fetch and show 🤖 directly.
+function _setAvatar(elementId, username, sizePx = 56) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const clean = (username || '').trim().replace(/^@/, '');
+  if (!clean) {
+    el.textContent = '🤖';
+    return;
+  }
+  const url = `https://unavatar.io/twitter/${encodeURIComponent(clean)}?fallback=false`;
+  // Empty the slot, then inject <img>.  onerror swaps back to the emoji
+  // without disturbing the surrounding flex container's sizing.
+  el.innerHTML = `<img src="${url}" alt="${clean} avatar" loading="lazy"
+                       width="${sizePx}" height="${sizePx}"
+                       onerror="this.parentElement.textContent='🤖'"/>`;
+}
+
 function _populateStep2(p) {
-  // Avatar
+  // Avatar — prefer the directly-scraped URL (Nitter still works in many
+  // regions and gives us the exact image), but fall through to unavatar
+  // via the username when no scrape URL is present.  Either way, the
+  // onerror handler restores the 🤖 emoji on load failure.
   const aw = document.getElementById('avatarWrap');
   if (p.avatar_url) {
-    aw.innerHTML = `<img src="${p.avatar_url}" alt="avatar" onerror="this.parentElement.textContent='🤖'"/>`;
+    aw.innerHTML = `<img src="${p.avatar_url}" alt="${p.username || ''} avatar"
+                         onerror="this.parentElement.textContent='🤖'"/>`;
   } else {
-    aw.textContent = '🤖';
+    _setAvatar('avatarWrap', p.username);
   }
 
   // Name / handle / bio
@@ -1193,14 +1244,20 @@ function _renderResults(d) {
 
   // Show the @handle ONLY when the X profile was actually scraped from
   // Nitter (`x_handle_verified`). Otherwise it's just whatever the user
-  // typed in step 1 and is misleading.
+  // typed in step 1 and is misleading.  Same rule for the results-hero
+  // avatar — only attempt to fetch a profile picture when we've verified
+  // the @handle, otherwise show the 🤖 placeholder.
   const handleEl = document.getElementById('resHandle');
   if (d.x_handle_verified && d.x_username) {
     handleEl.textContent = `@${d.x_username}`;
     handleEl.style.display = '';
+    _setAvatar('resAvatarWrap', d.x_username, 44);
   } else {
     handleEl.textContent = '';
     handleEl.style.display = 'none';
+    // Reset the slot back to the emoji in case the user re-scanned
+    // (the avatar element persists between scans).
+    document.getElementById('resAvatarWrap').textContent = '🤖';
   }
 
   document.getElementById('resVerdict').textContent = d.verdict || '';
