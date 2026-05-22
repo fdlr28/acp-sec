@@ -267,25 +267,67 @@ def health():
     }), 200
 
 
+def _is_same_origin_request() -> bool:
+    """True iff the request was issued by this server's own browser frontend.
+
+    Browsers ALWAYS attach an Origin header to POSTs (it's part of CORS and
+    cannot be spoofed by attacker JS running on a different site — only the
+    user's own browser at our domain emits our Origin).  Scripted callers
+    (curl, requests, Python) can set Origin to anything, so this is not a
+    universal auth check — it is specifically the "is this a browser fetch
+    from my own dashboard" check.  Token gate still applies to everyone else.
+    """
+    origin = request.headers.get("Origin", "")
+    if not origin or origin == "null":
+        return False
+    # Compare HOSTS, not full URLs — Railway terminates TLS upstream so the
+    # Flask process sees `request.host_url` as http://… even though the
+    # browser sent Origin: https://…  Matching on host alone avoids the
+    # scheme-mismatch trap without weakening the check meaningfully.
+    from urllib.parse import urlparse
+    try:
+        origin_host = urlparse(origin).netloc.lower()
+    except Exception:
+        return False
+    return bool(origin_host) and origin_host == request.host.lower()
+
+
 def _require_scanner_token() -> tuple[dict, int] | None:
-    """Gate the scanner endpoints with a shared secret when SCANNER_TOKEN is set.
+    """Gate the scanner endpoints when SCANNER_TOKEN is set.
 
     On a public Railway URL the heuristic scanner becomes a free SSRF
     relay if left open — every request kicks off ~10 parallel HTTP fetches
-    against an attacker-chosen target.  When SCANNER_TOKEN is set in the
-    environment, requests must echo it in the X-Scanner-Token header.
+    against an attacker-chosen target.  Two paths are allowed through:
 
-    Returns None when the request is allowed.  Returns (body, status) when
-    the caller should short-circuit with that JSON response.
+      1. Same-origin browser request — the dashboard's own JS calling its
+         own backend.  Detected via the Origin header (always present on
+         POSTs, set by the browser, not spoofable from a foreign site).
+         This is what lets the in-browser /scanner UI work without us
+         embedding the token in public HTML.
+      2. Explicit X-Scanner-Token header matching SCANNER_TOKEN.  This is
+         the path for scripted / programmatic callers (CI, curl, agents).
+
+    Anything else gets 401.  Returns None to allow, or (body, status) to
+    short-circuit.
     """
     required = os.environ.get("SCANNER_TOKEN", "").strip()
     if not required:
         # No token configured → endpoints behave exactly as in dev (open).
         return None
+
+    if _is_same_origin_request():
+        return None
+
     sent = request.headers.get("X-Scanner-Token", "").strip()
     if not sent or sent != required:
         return (
-            {"ok": False, "error": "scanner endpoint requires X-Scanner-Token header"},
+            {
+                "ok": False,
+                "error": (
+                    "scanner endpoint requires same-origin browser request "
+                    "OR X-Scanner-Token header"
+                ),
+            },
             401,
         )
     return None
