@@ -6,58 +6,58 @@
   <title>ACP-SEC Monitor — Continuous Agent Watchlist</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
   <style>
-    /* ── Reset & tokens ─────────────────────────────────────────────────────── */
+    /* ── Reset & tokens (Base blockchain brand) ─────────────────────────────── */
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
       --bg-primary:    #ffffff;
-      --bg-secondary:  #f8f7f4;
-      --bg-tertiary:   #efefeb;
-      --text-primary:  #1a1a18;
-      --text-secondary:#6b6a66;
-      --text-tertiary: #9a9995;
-      --border:        #d9d7ce;
-      --border-light:  #efefeb;
+      --bg-secondary:  #f5f5f5;
+      --bg-tertiary:   #eeeeee;
+      --text-primary:  #0A0B0D;
+      --text-secondary:#8A919E;
+      --text-tertiary: #9CA3AF;
+      --border:        #E5E7EB;
+      --border-light:  #F3F4F6;
 
-      --accent-danger: #e24b4a;
-      --accent-warning:#ba7517;
-      --accent-info:   #378add;
-      --accent-success:#639922;
-      --accent-amber:  #ef9f27;
-      --accent-purple: #7f77dd;
-      --accent-teal:   #1d9e75;
+      --accent-base:   #0052FF;
+      --accent-danger: #FF4444;
+      --accent-warning:#F5A623;
+      --accent-info:   #0052FF;
+      --accent-success:#00C087;
+      --accent-amber:  #F5A623;
 
-      --danger-light:  #fcebeb;
-      --warning-light: #faeeda;
-      --info-light:    #e6f1fb;
+      --danger-light:  #3a1a1a;
+      --warning-light: #3a2a1a;
+      --info-light:    #1a2a4a;
     }
 
-    body.dark-mode {
-      --bg-primary:    #1a1a18;
-      --bg-secondary:  #2c2c2a;
-      --bg-tertiary:   #3d3d3a;
-      --text-primary:  #e8e6dc;
-      --text-secondary:#a8a5a0;
-      --text-tertiary: #7d7a75;
-      --border:        #4a4844;
-      --border-light:  #3d3d3a;
-      --danger-light:  #501313;
-      --warning-light: #412402;
-      --info-light:    #042c53;
+    body.dark-mode,
+    body:not(.light-mode) {
+      --bg-primary:    #0A0B0D;
+      --bg-secondary:  #1C1D1F;
+      --bg-tertiary:   #2A2B2E;
+      --text-primary:  #FFFFFF;
+      --text-secondary:#8A919E;
+      --text-tertiary: #6B7280;
+      --border:        #2A2B2E;
+      --border-light:  #1C1D1F;
+      --danger-light:  #3a0a0a;
+      --warning-light: #3a2a0a;
+      --info-light:    #0a1a4a;
     }
 
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg-secondary);
+      background: var(--bg-primary);
       color: var(--text-primary);
       line-height: 1.6;
     }
 
     /* ── Header ────────────────────────────────────────────────────────────── */
     header {
-      background: var(--bg-primary);
+      background: var(--bg-secondary);
       border-bottom: 1px solid var(--border);
-      padding: 1.5rem 2rem;
+      padding: 1.25rem 2rem;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -67,30 +67,39 @@
       font-weight: 700;
       color: var(--text-primary);
     }
-    header h1 span { color: var(--accent-info); }
+    header h1 span {
+      background: linear-gradient(135deg,#0052FF,#00C087);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
     .header-controls { display: flex; gap: 0.75rem; align-items: center; }
     .btn {
-      padding: 0.5rem 1rem;
+      padding: 0.5rem 1.1rem;
       border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg-primary);
+      border-radius: 9999px;
+      background: var(--bg-secondary);
       color: var(--text-primary);
-      font-size: 0.85rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
       cursor: pointer;
       transition: all 0.15s;
     }
     .btn:hover { background: var(--bg-tertiary); }
     .btn-primary {
-      background: var(--accent-info);
+      background: var(--accent-base);
       color: #fff;
-      border-color: var(--accent-info);
+      border-color: var(--accent-base);
     }
-    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:hover { background: #0041CC; }
     .btn-danger {
       background: var(--accent-danger);
       color: #fff;
       border-color: var(--accent-danger);
     }
+    .btn-danger:hover { background: #CC3333; }
 
     /* ── Layout ────────────────────────────────────────────────────────────── */
     .container {
@@ -100,6 +109,7 @@
       display: grid;
       gap: 1.5rem;
     }
+    .container:last-child { padding-bottom: 2rem; }
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -113,9 +123,11 @@
     .card {
       background: var(--bg-primary);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 12px;
       overflow: hidden;
+      transition: border-color .2s;
     }
+    .card:hover { border-color: rgba(0,82,255,.2); }
     .card-header {
       padding: 1rem 1.25rem;
       border-bottom: 1px solid var(--border-light);
@@ -188,11 +200,11 @@
       font-size: 0.75rem;
       font-weight: 600;
     }
-    .badge-success { background: var(--danger-light); color: var(--accent-success); }
-    .badge-warning { background: var(--warning-light); color: var(--accent-warning); }
-    .badge-danger  { background: var(--danger-light); color: var(--accent-danger); }
-    .badge-info    { background: var(--info-light);    color: var(--accent-info); }
-    .badge-purple  { background: var(--info-light);    color: var(--accent-purple); }
+    .badge-success { background: rgba(0,192,135,.15); color: #00C087; }
+    .badge-warning { background: rgba(245,166,35,.15); color: #F5A623; }
+    .badge-danger  { background: rgba(255,68,68,.15); color: #FF4444; }
+    .badge-info    { background: rgba(0,82,255,.15);    color: #0052FF; }
+    .badge-purple  { background: rgba(0,82,255,.15);    color: #0052FF; }
 
     /* ── Score bar ─────────────────────────────────────────────────────────── */
     .score-bar {
@@ -209,6 +221,7 @@
       height: 100%;
       border-radius: 3px;
       transition: width 0.3s;
+      background: var(--accent-base);
     }
 
     /* ── Alert panel ───────────────────────────────────────────────────────── */
@@ -258,8 +271,8 @@
     }
     .form-group input:focus, .form-group select:focus {
       outline: none;
-      border-color: var(--accent-info);
-      box-shadow: 0 0 0 2px rgba(55, 138, 221, 0.15);
+      border-color: var(--accent-base);
+      box-shadow: 0 0 0 2px rgba(0,82,255,.15);
     }
 
     /* ── Empty state ───────────────────────────────────────────────────────── */
@@ -273,10 +286,13 @@
     /* ── Footer ────────────────────────────────────────────────────────────── */
     footer {
       text-align: center;
-      padding: 1.5rem;
-      color: var(--text-tertiary);
+      padding: 1.5rem 2rem;
+      color: var(--text-secondary);
       font-size: 0.8rem;
+      border-top: 1px solid var(--border);
     }
+    footer a { color: var(--accent-base); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -287,35 +303,38 @@
      own :root, so dark mode + alt palettes "just work". */
   .acpsec-nav{
     display:flex;align-items:center;gap:4px;
-    height:44px;padding:0 16px;
-    background:var(--bg-primary);
-    border-bottom:1px solid var(--border);
-    font:13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    height:48px;padding:0 20px;
+    background:#0A0B0D;
+    border-bottom:1px solid #1C1D1F;
+    font:13px/1 'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   }
   .acpsec-nav__brand{
     display:inline-flex;align-items:center;gap:6px;
-    margin-right:14px;font-weight:600;
-    color:var(--text-primary);text-decoration:none;letter-spacing:.02em;
+    margin-right:16px;font-weight:700;
+    color:#0052FF;text-decoration:none;letter-spacing:-.01em;
+    font-size:14px;
   }
   .acpsec-nav__links{display:flex;gap:2px;flex:1;}
   .acpsec-nav__link{
     display:inline-flex;align-items:center;gap:6px;
-    padding:6px 10px;border-radius:6px;text-decoration:none;
-    color:var(--text-secondary);
+    padding:7px 12px;border-radius:6px;text-decoration:none;
+    color:#8A919E;
+    font-weight:500;
     transition:background .15s,color .15s;
   }
-  .acpsec-nav__link:hover{background:var(--bg-secondary);color:var(--text-primary);}
+  .acpsec-nav__link:hover{background:rgba(255,255,255,.06);color:#fff;}
   .acpsec-nav__link[aria-current="page"]{
-    background:var(--accent-purple);color:#fff;
+    color:#0052FF;
+    background:transparent;
   }
-  .acpsec-nav__link[aria-current="page"]:hover{background:var(--accent-purple);}
+  .acpsec-nav__link[aria-current="page"]:hover{color:#0052FF;background:rgba(0,82,255,.08);}
   .acpsec-nav__ext{
-    color:var(--text-tertiary);font-size:12px;text-decoration:none;
-    padding:6px 10px;border-radius:6px;
+    color:#6B7280;font-size:12px;text-decoration:none;
+    padding:7px 12px;border-radius:6px;font-weight:500;
   }
-  .acpsec-nav__ext:hover{color:var(--text-primary);background:var(--bg-secondary);}
+  .acpsec-nav__ext:hover{color:#fff;background:rgba(255,255,255,.06);}
   @media (max-width:540px){
-    .acpsec-nav{padding:0 10px;}
+    .acpsec-nav{padding:0 12px;}
     .acpsec-nav__link span:not(.acpsec-nav__icon){display:none;}
   }
 </style>
@@ -332,7 +351,7 @@
   <header>
     <h1><span>ACP-SEC</span> Monitor</h1>
     <div class="header-controls">
-      <button class="btn" onclick="toggleDark()">Dark Mode</button>
+      <button class="btn" onclick="toggleDark()" id="darkToggle">🌙 Dark</button>
       <button class="btn btn-primary" onclick="runAllScans()">Run All Scans</button>
     </div>
   </header>
@@ -444,7 +463,12 @@
   </div>
 
   <footer>
-    ACP-SEC Monitor v0.3.0 &mdash; AI Agent Commerce Protocol Security Framework
+    <p>
+      ACP-SEC Framework v0.3.0 —
+      Built by <a href="https://x.com/acpsecagent" target="_blank">@acpsecagent</a> |
+      <a href="https://github.com/fdlr28/acp-sec" target="_blank">GitHub: github.com/fdlr28/acp-sec</a> |
+      <a href="https://x.com/acpsecagent" target="_blank">X: x.com/acpsecagent</a>
+    </p>
   </footer>
 
   <script>
@@ -657,12 +681,12 @@
           datasets: [{
             label: 'Score',
             data: [],
-            borderColor: '#378add',
-            backgroundColor: 'rgba(55, 138, 221, 0.1)',
-            fill: true,
-            tension: 0.3,
-            pointRadius: 4,
-            pointBackgroundColor: '#378add',
+        borderColor: '#0052FF',
+        backgroundColor: 'rgba(0, 82, 255, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 4,
+        pointBackgroundColor: '#0052FF',
           }]
         },
         options: {
@@ -724,10 +748,10 @@
     }
 
     function scoreColor(score) {
-      if (score >= 90) return '#639922';
-      if (score >= 70) return '#378add';
-      if (score >= 50) return '#ba7517';
-      return '#e24b4a';
+      if (score >= 90) return '#00C087';
+      if (score >= 70) return '#0052FF';
+      if (score >= 50) return '#F5A623';
+      return '#FF4444';
     }
 
     function timeAgo(ts) {
@@ -749,7 +773,15 @@
     }
 
     function toggleDark() {
-      document.body.classList.toggle('dark-mode');
+      const on = document.body.classList.toggle('dark-mode');
+      localStorage.setItem('monitor-theme', on ? 'dark' : 'light');
+      document.getElementById('darkToggle').textContent = on ? '☀️ Light' : '🌙 Dark';
+    }
+
+    // Default to dark mode
+    if (localStorage.getItem('monitor-theme') !== 'light') {
+      document.body.classList.add('dark-mode');
+      document.getElementById('darkToggle').textContent = '☀️ Light';
     }
   </script>
 </body>
