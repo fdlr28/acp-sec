@@ -1638,6 +1638,151 @@ def _gov(text: str, hdrs: dict, soup: BeautifulSoup) -> list[dict]:
     return [c01, c02, c03, c04, c05]
 
 
+def _pub(corpus: dict, soup: BeautifulSoup) -> list[dict]:
+    """Public-surface / transparency dimension (PUB).
+
+    These checks read signals that are already collected in `corpus` (see
+    `_build_corpus`) — no extra network probes.  They round out the public
+    scanner with the things a curious user can verify themselves: does the
+    site publish robots.txt? a sitemap? a security.txt? Are policy /
+    disclosure / bounty pages linked? Each is 2 points (16 pts total),
+    severity LOW or MEDIUM — informational signals, not security primitives.
+
+    Returns 8 controls (PUB-01 … PUB-08).
+    """
+    D, DN = "PUB", "Public Surface & Transparency"
+    sec_txt     = corpus.get("security_txt") or {}
+    rob_sitemap = corpus.get("robots_sitemap") or {}
+    bounty      = corpus.get("bounty") or {}
+    text_lower  = (corpus.get("all_text") or "").lower()
+
+    def _has_link(*keywords: str) -> bool:
+        """True iff any <a href="…"> contains any keyword (case-insensitive)."""
+        for a in soup.find_all("a", href=True):
+            href = (a.get("href") or "").lower()
+            if any(k in href for k in keywords):
+                return True
+        return False
+
+    # PUB-01 — robots.txt published (2 pts, LOW)
+    robots = (rob_sitemap.get("robots") or "").strip()
+    if robots:
+        # Treat a wildcard global block as still-present-but-restrictive.
+        only_blocks_everything = (
+            "disallow: /" in robots.lower()
+            and "allow:" not in robots.lower()
+            and len(robots) < 80
+        )
+        if only_blocks_everything:
+            c01 = _warn("PUB-01", "robots.txt published", D, DN, 2, "LOW",
+                        ["robots.txt exists but blocks every crawler — atypical for a public agent."],
+                        ["Confirm the wildcard Disallow is intentional; consider exposing key public pages."])
+        else:
+            c01 = _pass("PUB-01", "robots.txt published", D, DN, 2, "LOW",
+                        [f"robots.txt found ({len(robots)} bytes)."])
+    else:
+        c01 = _fail("PUB-01", "robots.txt published", D, DN, 2, "LOW",
+                    ["No robots.txt at site root."],
+                    ["Publish /robots.txt so search engines and security crawlers know which paths to index."])
+
+    # PUB-02 — sitemap.xml discoverable (2 pts, LOW)
+    sitemap = (rob_sitemap.get("sitemap") or "").strip()
+    sitemap_urls = rob_sitemap.get("sitemap_urls") or []
+    if sitemap or sitemap_urls:
+        c02 = _pass("PUB-02", "sitemap.xml discoverable", D, DN, 2, "LOW",
+                    [f"Sitemap found ({len(sitemap_urls)} URLs declared)." if sitemap_urls
+                     else "Sitemap found at /sitemap.xml."])
+    else:
+        c02 = _fail("PUB-02", "sitemap.xml discoverable", D, DN, 2, "LOW",
+                    ["No sitemap.xml found and none declared in robots.txt."],
+                    ["Publish /sitemap.xml or declare it via `Sitemap:` in robots.txt for discoverability."])
+
+    # PUB-03 — security.txt at /.well-known/security.txt (RFC 9116) (2 pts, MEDIUM)
+    if sec_txt.get("present"):
+        body = (sec_txt.get("body") or "").lower()
+        has_contact = "contact:" in body
+        url = sec_txt.get("url", "")
+        at_well_known = ".well-known/security.txt" in url.lower()
+        if at_well_known and has_contact:
+            c03 = _pass("PUB-03", "security.txt published (RFC 9116)", D, DN, 2, "MEDIUM",
+                        [f"security.txt at {url} with Contact: line."])
+        elif has_contact:
+            c03 = _warn("PUB-03", "security.txt published (RFC 9116)", D, DN, 2, "MEDIUM",
+                        [f"security.txt found at root ({url}), not at the canonical /.well-known/ path."],
+                        ["Move security.txt to /.well-known/security.txt per RFC 9116."])
+        else:
+            c03 = _warn("PUB-03", "security.txt published (RFC 9116)", D, DN, 2, "MEDIUM",
+                        [f"security.txt found at {url} but missing required Contact: line."],
+                        ["Add a Contact: line (mailto:, https:, or tel:) per RFC 9116."])
+    else:
+        c03 = _fail("PUB-03", "security.txt published (RFC 9116)", D, DN, 2, "MEDIUM",
+                    ["No security.txt at /.well-known/security.txt or site root."],
+                    ["Publish /.well-known/security.txt per RFC 9116 with at least Contact: and Expires: fields."])
+
+    # PUB-04 — Privacy policy linked (2 pts, MEDIUM)
+    privacy_link = _has_link("/privacy", "privacy-policy", "/legal/privacy")
+    privacy_text = "privacy policy" in text_lower or "data protection" in text_lower
+    if privacy_link or privacy_text:
+        c04 = _pass("PUB-04", "Privacy policy linked", D, DN, 2, "MEDIUM",
+                    ["Privacy policy link or mention found in public content."])
+    else:
+        c04 = _fail("PUB-04", "Privacy policy linked", D, DN, 2, "MEDIUM",
+                    ["No privacy policy link or reference found."],
+                    ["Link a privacy policy from the site footer covering data collection, processing, and retention."])
+
+    # PUB-05 — Terms of service linked (2 pts, LOW)
+    tos_link = _has_link("/terms", "/tos", "terms-of-service", "/legal/terms")
+    tos_text = "terms of service" in text_lower or "terms of use" in text_lower
+    if tos_link or tos_text:
+        c05 = _pass("PUB-05", "Terms of service linked", D, DN, 2, "LOW",
+                    ["Terms of service link or mention found."])
+    else:
+        c05 = _fail("PUB-05", "Terms of service linked", D, DN, 2, "LOW",
+                    ["No terms of service link or reference found."],
+                    ["Publish a Terms of Service describing acceptable use and liability boundaries for the agent."])
+
+    # PUB-06 — Responsible disclosure policy (2 pts, MEDIUM)
+    rd_link = _has_link("responsible-disclosure", "/vdp", "vulnerability-disclosure")
+    rd_text = (
+        "responsible disclosure" in text_lower
+        or "vulnerability disclosure" in text_lower
+        or "vdp" in text_lower
+    )
+    sec_txt_has_policy = "policy:" in (sec_txt.get("body") or "").lower()
+    if rd_link or rd_text or sec_txt_has_policy:
+        c06 = _pass("PUB-06", "Responsible disclosure policy published", D, DN, 2, "MEDIUM",
+                    ["Responsible disclosure / VDP referenced in public content or security.txt."])
+    else:
+        c06 = _fail("PUB-06", "Responsible disclosure policy published", D, DN, 2, "MEDIUM",
+                    ["No responsible disclosure or vulnerability disclosure policy found."],
+                    ["Publish a coordinated disclosure policy (timelines, scope, safe-harbor language).",
+                     "Reference it via Policy: in security.txt."])
+
+    # PUB-07 — Bug bounty program (2 pts, LOW)
+    if bounty.get("found"):
+        ev = bounty.get("evidence", []) or ["Bug bounty signals detected."]
+        c07 = _pass("PUB-07", "Bug bounty program present", D, DN, 2, "LOW", ev[:2])
+    else:
+        c07 = _warn("PUB-07", "Bug bounty program present", D, DN, 2, "LOW",
+                    ["No bug bounty program detected in public content."],
+                    ["Consider listing on HackerOne / Bugcrowd / Intigriti or hosting an in-house program."])
+
+    # PUB-08 — API documentation present (2 pts, LOW)
+    api_doc_link = _has_link("/docs", "/api", "/developers", "/reference", "openapi", "swagger")
+    api_doc_text = any(k in text_lower for k in (
+        "api documentation", "openapi", "swagger", "developer docs", "api reference",
+    ))
+    if api_doc_link or api_doc_text:
+        c08 = _pass("PUB-08", "API documentation discoverable", D, DN, 2, "LOW",
+                    ["API documentation or OpenAPI references found."])
+    else:
+        c08 = _warn("PUB-08", "API documentation discoverable", D, DN, 2, "LOW",
+                    ["No API documentation or OpenAPI/Swagger references found."],
+                    ["If this agent exposes an API, publish OpenAPI spec or developer docs so integrators can audit it."])
+
+    return [c01, c02, c03, c04, c05, c06, c07, c08]
+
+
 # ---------------------------------------------------------------------------
 # Main analysis entry point
 # ---------------------------------------------------------------------------
@@ -1715,6 +1860,9 @@ def analyze_agent(url: str, agent_name: str = "", scan_mode: str = "root") -> di
     controls.extend(_priv(body_text, hdrs_lower, soup))
     controls.extend(_out(body_text,  hdrs_lower, soup))
     controls.extend(_gov(body_text,  hdrs_lower, soup))
+    # Public-surface / transparency dimension (8 checks, +16 pts) — reads
+    # signals already collected in corpus so no extra HTTP probes.
+    controls.extend(_pub(corpus, soup))
 
     # Apply high-confidence promotions from target-level corpus signals
     controls = _apply_promotions(controls, corpus)

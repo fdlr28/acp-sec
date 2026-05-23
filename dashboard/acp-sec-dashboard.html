@@ -830,6 +830,42 @@
       border-radius: 4px;
       font-size: .8em;
     }
+
+    /* ── Cached-scan banner ───────────────────────────────────────────────────
+       Shown only when applyAPIData() was called with source='cache' (i.e.
+       the data came from localStorage after a recent scan on /scanner). */
+    .cached-banner {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.7rem 1.1rem;
+      margin: 1rem auto 1.25rem;
+      max-width: 1100px;
+      background: var(--info-light, rgba(127, 119, 221, .08));
+      border: 1px solid var(--accent-purple);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 0.88rem;
+    }
+    .cached-banner[hidden] { display: none; }
+    .cached-banner__icon { font-size: 1.1rem; line-height: 1; }
+    .cached-banner__text { flex: 1; }
+    .cached-banner__text strong { color: var(--text-primary); }
+    .cached-banner__clear {
+      padding: 0.35rem 0.85rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: transparent;
+      color: var(--accent-purple);
+      border: 1px solid var(--accent-purple);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    .cached-banner__clear:hover {
+      background: var(--accent-purple);
+      color: #fff;
+    }
   </style>
 </head>
 
@@ -924,6 +960,18 @@
 
 <!-- ── Main ────────────────────────────────────────────────────────────────── -->
 <div class="container">
+
+  <!-- Cached-scan banner — shown only when data was loaded from localStorage
+       (not from the server's /api/score and not from a fresh upload). -->
+  <div id="cachedBanner" class="cached-banner" hidden>
+    <span class="cached-banner__icon" aria-hidden="true">🕐</span>
+    <span class="cached-banner__text">
+      Showing last scan result — <strong id="cachedBannerName">—</strong> scanned <strong id="cachedBannerAgo">just now</strong>
+    </span>
+    <button class="cached-banner__clear" type="button" onclick="clearCachedScan()">
+      Clear
+    </button>
+  </div>
 
   <!-- Welcome / empty state (shown until real data loads) -->
   <div id="emptyState" class="empty-dashboard" role="region" aria-label="Welcome">
@@ -1183,10 +1231,14 @@ let _sortDir = 1;      // 1 = ascending, -1 = descending
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 
-// Local-storage key for the most recent applied scan result.  Survives
-// page reloads so the user doesn't see the empty state every time when the
-// server hasn't persisted anything (e.g. browser-only / file-upload flow).
-const _LAST_SCAN_KEY = 'acpsec.lastScan';
+// Local-storage keys for the cross-page scan handoff.
+// Scanner page writes both keys after every successful scan; we read here.
+const _LAST_SCAN_KEY      = 'acpsec_last_scan';
+const _LAST_SCAN_TIME_KEY = 'acpsec_last_scan_time';
+// TTL — how long after a scan we still auto-load it from localStorage on
+// page load.  Older than this and the user sees the empty state (the cached
+// data is still in localStorage if they want to clear it manually).
+const _LAST_SCAN_TTL_MS   = 60 * 60 * 1000;   // 1 hour
 
 function initDashboard() {
   // Show the welcome / empty state until something proves we have real data.
@@ -1227,15 +1279,21 @@ async function tryAutoLoad() {
   } catch (_) { /* server not running */ }
 
   // 3. Fall back to localStorage so a returning user sees their last scan
-  //    without needing the server to remember anything.
+  //    without needing the server to remember anything.  Gated on the
+  //    1-hour TTL — older cached data is left in place (the user can still
+  //    drop it via 📁 Load Report) but doesn't auto-mount.
   try {
     const cached = localStorage.getItem(_LAST_SCAN_KEY);
-    if (cached) {
-      const data = JSON.parse(cached);
-      if (data && (data.controls || data.dimensions)) {
-        applyAPIData(data);
-        showApiStatus('cached');
-        return;
+    const tsRaw  = localStorage.getItem(_LAST_SCAN_TIME_KEY);
+    if (cached && tsRaw) {
+      const ts  = Number(tsRaw);
+      const age = Date.now() - ts;
+      if (Number.isFinite(ts) && age >= 0 && age < _LAST_SCAN_TTL_MS) {
+        const data = JSON.parse(cached);
+        if (data && (data.controls || data.dimensions)) {
+          applyAPIData(data, { source: 'cache', cachedAtMs: ts });
+          return;
+        }
       }
     }
   } catch (_) { /* corrupt JSON or storage unavailable — ignore */ }
@@ -1710,8 +1768,50 @@ function resetEdits() {
 
 // ── Apply data from API response ───────────────────────────────────────────
 
-function applyAPIData(data) {
+// ── Cached-scan banner helpers ────────────────────────────────────────────
+
+function _relativeTime(deltaMs) {
+  const s = Math.max(0, Math.round(deltaMs / 1000));
+  if (s < 60)        return s <= 5 ? 'just now' : `${s} seconds ago`;
+  const m = Math.round(s / 60);
+  if (m < 60)        return m === 1 ? '1 minute ago'  : `${m} minutes ago`;
+  const h = Math.round(m / 60);
+  if (h < 24)        return h === 1 ? '1 hour ago'    : `${h} hours ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? '1 day ago' : `${d} days ago`;
+}
+
+function _renderCachedBanner(data, opts) {
+  const banner = document.getElementById('cachedBanner');
+  if (!banner) return;
+  if (opts && opts.source === 'cache' && opts.cachedAtMs) {
+    document.getElementById('cachedBannerName').textContent = data.agent_name || 'agent';
+    document.getElementById('cachedBannerAgo').textContent  =
+      _relativeTime(Date.now() - opts.cachedAtMs);
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+}
+
+/** Wired to the banner's "Clear" button — drop the cache and bounce back
+ *  to the empty welcome state without a full page reload. */
+function clearCachedScan() {
+  try {
+    localStorage.removeItem(_LAST_SCAN_KEY);
+    localStorage.removeItem(_LAST_SCAN_TIME_KEY);
+  } catch (_) { /* ignore */ }
+  document.getElementById('cachedBanner').hidden = true;
+  document.body.classList.add('no-data');
+}
+
+function applyAPIData(data, opts = {}) {
   const controls = data.controls || [];
+
+  // Cached-scan banner: when the caller flagged this load as coming from
+  // localStorage (source='cache'), surface a small banner with timestamp +
+  // Clear button so the user knows the dashboard isn't necessarily live.
+  _renderCachedBanner(data, opts);
 
   // Update hero text
   document.getElementById('auditTarget').textContent =
@@ -1767,11 +1867,16 @@ function applyAPIData(data) {
   // Reveal the dashboard — empty state is hidden by removing this class.
   document.body.classList.remove('no-data');
 
-  // Persist for the next page load.  Best-effort; ignore storage quota
-  // / private-mode errors silently — losing the cache is a soft failure.
-  try {
-    localStorage.setItem(_LAST_SCAN_KEY, JSON.stringify(data));
-  } catch (_) { /* localStorage unavailable or quota exceeded */ }
+  // Persist for the next page load.  Skip the write when the data CAME
+  // from cache — re-writing would clobber the original scan timestamp
+  // and make "scanned X minutes ago" reset to "just now" on every reload.
+  // Best-effort; ignore storage quota / private-mode errors silently.
+  if (opts.source !== 'cache') {
+    try {
+      localStorage.setItem(_LAST_SCAN_KEY,      JSON.stringify(data));
+      localStorage.setItem(_LAST_SCAN_TIME_KEY, String(Date.now()));
+    } catch (_) { /* localStorage unavailable or quota exceeded */ }
+  }
 }
 
 // ── Manual API fetch ───────────────────────────────────────────────────────

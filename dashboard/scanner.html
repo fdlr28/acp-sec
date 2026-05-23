@@ -923,7 +923,7 @@
     <!-- Actions -->
     <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;padding-top:0.5rem">
       <button class="btn" onclick="backToStep1()">🔍 Scan another agent</button>
-      <button class="btn btn-primary" onclick="sendToDashboard()">📊 View in Dashboard</button>
+      <button class="btn btn-primary" onclick="sendToDashboard()">📊 View Full Report →</button>
       <button class="btn" onclick="downloadResult()">📥 Export JSON</button>
     </div>
 
@@ -1211,6 +1211,16 @@ async function startScan() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     showToast('Scan complete!', 'success');
 
+    // Cross-page handoff: stash the latest scan in localStorage so a
+    // subsequent visit to / (the main dashboard) can auto-load it.
+    // Keys are deliberately the same on both pages — see the dashboard's
+    // tryAutoLoad() for the read side.  Wrapped in try/catch because
+    // private-browsing / quota errors should never break the scan flow.
+    try {
+      localStorage.setItem('acpsec_last_scan',      JSON.stringify(_scanResult));
+      localStorage.setItem('acpsec_last_scan_time', String(Date.now()));
+    } catch (_) { /* ignore */ }
+
   } catch (err) {
     showToast(`Scan failed: ${err.message}`, 'error', 6000);
   } finally {
@@ -1289,10 +1299,12 @@ function _renderResults(d) {
   bandEl.textContent = d.band || '—';
   bandEl.className   = `score-band ${d.band || ''}`;
 
-  // Metrics
+  // Metrics — controls count is dynamic (PUB dim took us from 30 → 38).
   document.getElementById('metricScore').textContent      = `${Math.round(pct)}`;
   document.getElementById('metricCritFails').textContent  = d.critical_fails ?? '—';
   document.getElementById('metricSecHdrs').textContent    = `${d.sec_header_count ?? 0}/9`;
+  const checksEl = document.getElementById('metricChecks');
+  if (checksEl) checksEl.textContent = (d.controls && d.controls.length) || '—';
 
   // Security headers
   _renderSecHeaders(d.security_headers || {});
@@ -1479,22 +1491,29 @@ function _renderCheck(c) {
 
 async function sendToDashboard() {
   if (!_scanResult) return;
+  // Refresh the localStorage handoff at click-time so the dashboard side
+  // sees a fresh `acpsec_last_scan_time` (the auto-load is gated on a
+  // 1-hour TTL).  Belt + suspenders with the immediate write in the scan
+  // flow above — covers the case where the user lets the page sit before
+  // clicking "View Full Report".
   try {
-    const res = await fetch('/api/score', {
+    localStorage.setItem('acpsec_last_scan',      JSON.stringify(_scanResult));
+    localStorage.setItem('acpsec_last_scan_time', String(Date.now()));
+  } catch (_) { /* ignore */ }
+
+  // Best-effort sync to the server-side score store too — multi-user
+  // deploys share one /api/score, so this lets other tabs see the scan.
+  try {
+    await fetch('/api/score', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(_scanResult),
       signal: AbortSignal.timeout(5000),
     });
-    if (res.ok) {
-      showToast('Sent to dashboard!', 'success');
-      setTimeout(() => window.location.href = '/', 900);
-    } else {
-      showToast('Could not send — is serve.py running?', 'error');
-    }
-  } catch {
-    showToast('Server unavailable', 'error');
-  }
+  } catch (_) { /* localStorage is enough — server is a bonus */ }
+
+  showToast('Loading full report…', 'success');
+  setTimeout(() => window.location.href = '/', 600);
 }
 
 function downloadResult() {
