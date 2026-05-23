@@ -763,6 +763,73 @@
       .audit-table th,
       .audit-table td { padding: 0.5rem 0.6rem; }
     }
+
+    /* ── Empty / welcome state ────────────────────────────────────────────────
+       Shown when neither the server nor localStorage has scan data yet.
+       Toggled by `body.no-data` — JS adds the class on boot and removes it
+       in applyAPIData() once real data lands.  Hides the hero + every
+       data-bearing .section so nothing stale from the demo data leaks. */
+    body.no-data > .container > .hero:not(#emptyState),
+    body.no-data > .container > .section { display: none !important; }
+    body.no-data #emptyState { display: flex !important; }
+    #emptyState { display: none; }   /* default hidden — JS opt-in */
+
+    .empty-dashboard {
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 4rem 1.5rem;
+      max-width: 560px;
+      margin: 2rem auto 0;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.04);
+    }
+    .empty-dashboard__icon {
+      font-size: 3.4rem;
+      opacity: .55;
+      margin-bottom: .75rem;
+    }
+    .empty-dashboard__title {
+      font-size: 1.45rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: .5rem;
+    }
+    .empty-dashboard__lede {
+      font-size: 1rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      margin-bottom: 1.5rem;
+    }
+    .empty-dashboard__cta {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .85rem 1.6rem;
+      font-size: .95rem;
+      font-weight: 600;
+      text-decoration: none;
+      background: var(--accent-purple);
+      color: #fff;
+      border-radius: 999px;
+      transition: background .15s, transform .05s;
+    }
+    .empty-dashboard__cta:hover { background: #6b6dcc; }
+    .empty-dashboard__cta:active { transform: translateY(1px); }
+    .empty-dashboard__hint {
+      margin-top: 1.25rem;
+      font-size: .82rem;
+      color: var(--text-tertiary);
+    }
+    .empty-dashboard__hint code {
+      background: var(--bg-tertiary);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: .8em;
+    }
   </style>
 </head>
 
@@ -858,6 +925,20 @@
 <!-- ── Main ────────────────────────────────────────────────────────────────── -->
 <div class="container">
 
+  <!-- Welcome / empty state (shown until real data loads) -->
+  <div id="emptyState" class="empty-dashboard" role="region" aria-label="Welcome">
+    <div class="empty-dashboard__icon" aria-hidden="true">🔒</div>
+    <div class="empty-dashboard__title">No agent scanned yet</div>
+    <div class="empty-dashboard__lede">
+      Use the Scanner to evaluate an AI agent's security posture across the
+      ACP-SEC framework. Results will appear here automatically.
+    </div>
+    <a href="/scanner" class="empty-dashboard__cta">🔍 Go to Scanner →</a>
+    <div class="empty-dashboard__hint">
+      Already have a report? Click <code>📁 Load Report</code> above or drop a JSON file anywhere on this page.
+    </div>
+  </div>
+
   <!-- Hero: animated ring + agent info -->
   <div class="hero">
 
@@ -868,38 +949,34 @@
         <circle class="ring-progress" cx="110" cy="110" r="96" id="ringProgress"/>
       </svg>
       <div class="ring-center">
-        <span class="score-number" id="scoreNumber">7</span>
+        <span class="score-number" id="scoreNumber">—</span>
         <span class="score-denom">/ 100</span>
-        <span class="risk-chip"   id="riskChip">CRITICAL</span>
+        <span class="risk-chip"   id="riskChip">—</span>
       </div>
     </div>
 
-    <!-- Info panel -->
+    <!-- Info panel — placeholder text only; applyAPIData() fills these in. -->
     <div class="hero-info">
       <div class="info-card">
-        <div class="tier-badge unrated" id="tierBadge">Unrated — Not Recommended</div>
-        <div class="info-title" id="auditTarget">Bankrbot</div>
+        <div class="tier-badge unrated" id="tierBadge">—</div>
+        <div class="info-title" id="auditTarget">—</div>
         <div class="info-desc"  id="auditDesc">
-          Retroactive audit at time of incident (May 4, 2026). No source
-          authentication, no thresholds, no anomaly detection.
-          $150K transferred in seconds.
+          Load a report or run a scan to populate this view.
         </div>
       </div>
 
       <div class="metrics-grid">
         <div class="metric-card">
           <div class="metric-label">Controls Passing</div>
-          <div class="metric-value" id="controlsPassing">1</div>
+          <div class="metric-value" id="controlsPassing">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Critical Gaps</div>
-          <div class="metric-value" id="criticalGaps"
-               style="color:var(--accent-danger)">5</div>
+          <div class="metric-value" id="criticalGaps">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Risk Level</div>
-          <div class="metric-value" id="riskLevel"
-               style="color:var(--accent-danger)">CRITICAL</div>
+          <div class="metric-value" id="riskLevel">—</div>
         </div>
       </div>
     </div>
@@ -1106,18 +1183,25 @@ let _sortDir = 1;      // 1 = ascending, -1 = descending
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 
+// Local-storage key for the most recent applied scan result.  Survives
+// page reloads so the user doesn't see the empty state every time when the
+// server hasn't persisted anything (e.g. browser-only / file-upload flow).
+const _LAST_SCAN_KEY = 'acpsec.lastScan';
+
 function initDashboard() {
-  renderControls(currentControlsData);
-  renderAudit(currentAuditData);
-  updateScores(currentAuditData);
-  buildChart(currentControlsData, currentAuditData);
+  // Show the welcome / empty state until something proves we have real data.
+  // Render nothing data-shaped until either the server, localStorage, or a
+  // user upload provides it.  This prevents the stale Bankrbot demo from
+  // flashing on every page load.
+  document.body.classList.add('no-data');
   setupDragDrop();
   tryAutoLoad();
 }
 
-/** Silently attempt to load saved data from the server on startup. */
+/** Attempt to populate the dashboard from server → then localStorage cache. */
 async function tryAutoLoad() {
-  // 1. Load catalogue first so descriptions are available for the editor
+  // 1. Load catalogue first so descriptions are available for the editor.
+  //    Independent of whether scan data exists.
   try {
     const res  = await fetch('/api/controls', { signal: AbortSignal.timeout(2000) });
     if (res.ok) {
@@ -1125,24 +1209,39 @@ async function tryAutoLoad() {
       if (json.checks && json.checks.length) {
         // Store as window._acpsecCatalogue keyed by id for O(1) lookup
         window._acpsecCatalogue = json.checks;
-        // Patch defaultControlsData with real names/descriptions if still on demo data
-        if (currentControlsData === defaultControlsData) {
-          _patchDefaultControls(json.checks);
-        }
       }
     }
   } catch (_) { /* server not running */ }
 
-  // 2. Load persisted score data
+  // 2. Try server-side persisted score (authoritative for multi-user deploys).
   try {
     const res = await fetch('/api/score', { signal: AbortSignal.timeout(2000) });
-    if (!res.ok) return;
-    const json = await res.json();
-    if (json.ok && json.data) {
-      applyAPIData(json.data);
-      showApiStatus('live');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.ok && json.data) {
+        applyAPIData(json.data);
+        showApiStatus('live');
+        return;
+      }
     }
-  } catch (_) { /* server not running — stay on demo data */ }
+  } catch (_) { /* server not running */ }
+
+  // 3. Fall back to localStorage so a returning user sees their last scan
+  //    without needing the server to remember anything.
+  try {
+    const cached = localStorage.getItem(_LAST_SCAN_KEY);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (data && (data.controls || data.dimensions)) {
+        applyAPIData(data);
+        showApiStatus('cached');
+        return;
+      }
+    }
+  } catch (_) { /* corrupt JSON or storage unavailable — ignore */ }
+
+  // 4. Neither — stay on the welcome state.  initDashboard() already set
+  //    body.no-data so the empty-state component is the only thing visible.
 }
 
 /**
@@ -1664,6 +1763,15 @@ function applyAPIData(data) {
 
   if (scoreChart) scoreChart.destroy();
   buildChart(dynControls, dynAudit);
+
+  // Reveal the dashboard — empty state is hidden by removing this class.
+  document.body.classList.remove('no-data');
+
+  // Persist for the next page load.  Best-effort; ignore storage quota
+  // / private-mode errors silently — losing the cache is a soft failure.
+  try {
+    localStorage.setItem(_LAST_SCAN_KEY, JSON.stringify(data));
+  } catch (_) { /* localStorage unavailable or quota exceeded */ }
 }
 
 // ── Manual API fetch ───────────────────────────────────────────────────────

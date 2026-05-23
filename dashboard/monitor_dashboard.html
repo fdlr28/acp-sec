@@ -282,6 +282,95 @@
       color: var(--text-tertiary);
     }
     .empty-state p { margin-top: 0.5rem; font-size: 0.9rem; }
+    .empty-state-prominent {
+      padding: 3rem 2rem;
+    }
+    .empty-state-prominent .empty-icon {
+      font-size: 2.4rem;
+      opacity: 0.6;
+      margin-bottom: 0.5rem;
+    }
+    .empty-state-prominent .empty-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 0.35rem;
+    }
+    .empty-state-prominent .empty-arrow {
+      display: inline-block;
+      font-size: 1.4rem;
+      animation: bobUp 1.6s ease-in-out infinite;
+    }
+    @keyframes bobUp {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(-4px); }
+    }
+
+    /* ── Prominent add-agent form ──────────────────────────────────────────── */
+    .add-agent-card {
+      /* Subtle Base-blue accent so it pops as the primary CTA. */
+      border-top: 3px solid var(--accent-base);
+    }
+    .add-agent-row {
+      display: grid;
+      grid-template-columns: 1fr 200px auto;
+      gap: 0.85rem;
+      align-items: stretch;
+    }
+    .add-agent-input {
+      width: 100%;
+      padding: 0.95rem 1.1rem;
+      font-size: 1rem;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .add-agent-input::placeholder { color: var(--text-tertiary); }
+    .add-agent-input:focus {
+      outline: none;
+      border-color: var(--accent-base);
+      box-shadow: 0 0 0 3px rgba(0,82,255,.18);
+    }
+    .add-agent-select {
+      padding: 0.95rem 1rem;
+      font-size: 0.95rem;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+    .add-agent-select:focus {
+      outline: none;
+      border-color: var(--accent-base);
+      box-shadow: 0 0 0 3px rgba(0,82,255,.18);
+    }
+    .btn-pill-primary {
+      padding: 0 1.8rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      background: var(--accent-base);
+      color: #fff;
+      border: 1.5px solid var(--accent-base);
+      border-radius: 999px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .15s, transform .05s;
+    }
+    .btn-pill-primary:hover  { background: #0041CC; border-color: #0041CC; }
+    .btn-pill-primary:active { transform: translateY(1px); }
+    .form-helper {
+      margin-top: 0.75rem;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+    @media (max-width: 720px) {
+      .add-agent-row {
+        grid-template-columns: 1fr;
+      }
+    }
 
     /* ── Footer ────────────────────────────────────────────────────────────── */
     footer {
@@ -377,28 +466,29 @@
       </div>
     </div>
 
-    <!-- Add agent form -->
-    <div class="card">
+    <!-- Add agent form (prominent CTA) -->
+    <div class="card add-agent-card">
       <div class="card-header">
         <h2>Add Agent to Watchlist</h2>
       </div>
       <div class="card-body">
-        <div class="form-row">
-          <div class="form-group">
-            <label for="agent-url">Agent Config URL or Path</label>
-            <input type="text" id="agent-url" placeholder="https://example.com/agent.yaml or /path/to/agent.yaml">
-          </div>
-          <div class="form-group" style="max-width: 180px;">
-            <label for="agent-schedule">Schedule</label>
-            <select id="agent-schedule">
-              <option value="hourly">Hourly</option>
-              <option value="daily" selected>Daily</option>
-              <option value="weekly">Weekly</option>
-            </select>
-          </div>
-          <div style="padding-top: 1.4rem;">
-            <button class="btn btn-primary" onclick="addAgent()">Add Agent</button>
-          </div>
+        <div class="add-agent-row">
+          <input type="text"
+                 id="agent-url"
+                 class="add-agent-input"
+                 placeholder="https://agent-website.com or @xusername"
+                 aria-label="Agent website URL or X username">
+          <select id="agent-schedule"
+                  class="add-agent-select"
+                  aria-label="Scan schedule">
+            <option value="daily" selected>📅 Daily</option>
+            <option value="weekly">📆 Weekly</option>
+            <option value="hourly">⏱️ Hourly</option>
+          </select>
+          <button class="btn-pill-primary" onclick="addAgent()">+ Add to Watchlist</button>
+        </div>
+        <div class="form-helper">
+          We'll scan this agent automatically on your chosen schedule and alert you when its security score drifts.
         </div>
       </div>
     </div>
@@ -410,8 +500,10 @@
         <span class="badge badge-info" id="watchlist-count">0 agents</span>
       </div>
       <div class="card-body">
-        <div id="watchlist-empty" class="empty-state">
-          <p>No agents on the watchlist yet. Add one above.</p>
+        <div id="watchlist-empty" class="empty-state empty-state-prominent">
+          <div class="empty-icon">📋</div>
+          <div class="empty-title">No agents in watchlist yet</div>
+          <p>Add one above <span class="empty-arrow">↑</span></p>
         </div>
         <table id="watchlist-table" style="display: none;">
           <thead>
