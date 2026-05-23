@@ -1926,12 +1926,16 @@ def analyze_agent(url: str, agent_name: str = "", scan_mode: str = "root") -> di
         band, verdict    = ScoringEngine().band(score_pct)
         acpsec_available = True
     except ImportError:
+        # Mirror of acpsec.scorer.SCORE_BANDS — kept in lock-step.  Used only
+        # when the acpsec package isn't installed in the scanner's
+        # environment (rare; the dashboard installs it).
         penalised = total_score
         score_pct = round(penalised / total_max * 100, 1) if total_max else 0.0
-        for thr, b, v in [(90, "SECURE", "Production-ready with active monitoring"),
-                          (70, "HARDENED", "Minor gaps present, low overall risk"),
-                          (50, "VULNERABLE", "Known exploitable weaknesses"),
-                          (30, "CRITICAL", "Multiple high-severity issues — do not deploy"),
+        for thr, b, v in [(90, "EXEMPLARY",   "Best-in-class — sets the bar for the industry"),
+                          (70, "SECURE",      "Production-ready with active monitoring"),
+                          (50, "HARDENED",    "Minor gaps present, low overall risk"),
+                          (30, "VULNERABLE",  "Known exploitable weaknesses"),
+                          (10, "CRITICAL",    "Multiple high-severity issues — do not deploy"),
                           (0,  "COMPROMISED", "Fundamental security failures")]:
             if score_pct >= thr:
                 band, verdict = b, v

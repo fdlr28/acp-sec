@@ -273,10 +273,19 @@
       letter-spacing: 0.03em;
       margin-bottom: 0.4rem;
     }
+    /* Legacy class names — preserved so old saved reports still render. */
     .tier-badge.unrated { background: var(--danger-light); color: var(--accent-danger); }
     .tier-badge.gold    { background: rgba(0,192,135,.15); color: #00C087; }
     .tier-badge.silver  { background: rgba(0,82,255,.15);  color: #0052FF; }
     .tier-badge.bronze  { background: rgba(245,166,35,.15); color: #F5A623; }
+
+    /* v0.3.1 six-band palette — class name == band name in UPPERCASE. */
+    .tier-badge.EXEMPLARY   { background: rgba(0,82,255,.15);   color: #0052FF; }
+    .tier-badge.SECURE      { background: rgba(0,192,135,.15);  color: #00C087; }
+    .tier-badge.HARDENED    { background: rgba(240,192,0,.18);  color: #B89200; }
+    .tier-badge.VULNERABLE  { background: rgba(245,166,35,.15); color: #F5A623; }
+    .tier-badge.CRITICAL    { background: rgba(255,107,0,.15);  color: #FF6B00; }
+    .tier-badge.COMPROMISED { background: rgba(255,68,68,.20);  color: #FF4444; }
 
     .info-title { font-size: 1.45rem; font-weight: 600; margin: 0.4rem 0; }
     .info-desc  { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.6; }
@@ -849,8 +858,9 @@
     }
     .cached-banner[hidden] { display: none; }
     .cached-banner__icon { font-size: 1.1rem; line-height: 1; }
-    .cached-banner__text { flex: 1; }
+    .cached-banner__text { flex: 1; display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
     .cached-banner__text strong { color: var(--text-primary); }
+    .cached-banner__sep { color: var(--text-tertiary); font-size: 0.9rem; }
     .cached-banner__clear {
       padding: 0.35rem 0.85rem;
       font-size: 0.8rem;
@@ -962,12 +972,17 @@
 <div class="container">
 
   <!-- Cached-scan banner — shown only when data was loaded from localStorage
-       (not from the server's /api/score and not from a fresh upload). -->
+       (not from the server's /api/score and not from a fresh upload).
+       Format per v0.3.1 spec: "Last scan: <agent> · <ago> · Clear" -->
   <div id="cachedBanner" class="cached-banner" hidden>
     <span class="cached-banner__icon" aria-hidden="true">🕐</span>
     <span class="cached-banner__text">
-      Showing last scan result — <strong id="cachedBannerName">—</strong> scanned <strong id="cachedBannerAgo">just now</strong>
+      <strong>Last scan:</strong>
+      <strong id="cachedBannerName">—</strong>
+      <span class="cached-banner__sep">·</span>
+      <span id="cachedBannerAgo">just now</span>
     </span>
+    <span class="cached-banner__sep">·</span>
     <button class="cached-banner__clear" type="button" onclick="clearCachedScan()">
       Clear
     </button>
@@ -1327,21 +1342,55 @@ function _patchDefaultControls(catalogueChecks) {
  * Animate the SVG ring to reflect `pct` (0-100).
  * Also updates the progress stroke colour to match the tier.
  */
+
+// ── Single source of truth for band → colour / band → label ──────────────
+// Lock-step with: acpsec/scorer.py SCORE_BANDS, scanner.html BAND_COLORS,
+// and the .tier-badge.{BAND} CSS rules earlier in this file.
+const BAND_COLORS = {
+  EXEMPLARY:   '#0052FF',   // blue   — best in class
+  SECURE:      '#00C087',   // green  — production ready
+  HARDENED:    '#F0C000',   // yellow — minor gaps
+  VULNERABLE:  '#F5A623',   // orange — exploitable
+  CRITICAL:    '#FF6B00',   // red-or — do not deploy
+  COMPROMISED: '#FF4444',   // red    — halt
+};
+
+// Tuned-down rgba versions for ring drop-shadow / metric glow.
+const BAND_GLOW = {
+  EXEMPLARY:   'rgba(0,82,255,.45)',
+  SECURE:      'rgba(0,192,135,.5)',
+  HARDENED:    'rgba(240,192,0,.55)',
+  VULNERABLE:  'rgba(245,166,35,.5)',
+  CRITICAL:    'rgba(255,107,0,.5)',
+  COMPROMISED: 'rgba(255,68,68,.5)',
+};
+
+/** Maps a percentage to a band name using the same thresholds as
+ *  acpsec.scorer.ScoringEngine.band().  Single source of truth client-side. */
+function bandForPct(pct) {
+  if (pct >= 90) return 'EXEMPLARY';
+  if (pct >= 70) return 'SECURE';
+  if (pct >= 50) return 'HARDENED';
+  if (pct >= 30) return 'VULNERABLE';
+  if (pct >= 10) return 'CRITICAL';
+  return 'COMPROMISED';
+}
+
 function animateRing(pct) {
   const offset = RING_CIRC - (pct / 100) * RING_CIRC;
   const ring   = document.getElementById('ringProgress');
+  const band   = bandForPct(pct);
+  const color  = BAND_COLORS[band];
+  const glow   = BAND_GLOW[band];
 
-  ring.style.strokeDashoffset = offset;    let color, glow;
-      if      (pct >= 90) { color = '#00C087'; glow = 'rgba(0,192,135,.5)'; }
-      else if (pct >= 75) { color = '#0052FF'; glow = 'rgba(0,82,255,.4)'; }
-      else if (pct >= 60) { color = '#F5A623'; glow = 'rgba(245,166,35,.5)'; }
-      else if (pct >= 30) { color = '#FF6B00'; glow = 'rgba(255,107,0,.5)'; }
-      else                { color = '#FF4444'; glow = 'rgba(255,68,68,.5)'; }
-
+  ring.style.strokeDashoffset = offset;
   ring.style.stroke  = color;
   ring.style.filter  = `drop-shadow(0 0 8px ${glow})`;
 
-  document.getElementById('riskChip').style.color = color;
+  // Score number adopts the band colour too, so the eye lands on a
+  // single hue across ring + number + chip.
+  document.getElementById('scoreNumber').style.color = color;
+  document.getElementById('riskChip').style.color    = color;
 }
 
 // ── Update all score-derived UI in one pass ────────────────────────────────
@@ -1355,39 +1404,45 @@ function updateScores(data) {
   document.getElementById('scoreNumber').textContent = pct;
   animateRing(pct);
 
-  // Risk chip label
-  const chip = document.getElementById('riskChip');
-  chip.textContent =
-    pct >= 90 ? 'SECURE'
-    : pct >= 75 ? 'HARDENED'
-    : pct >= 60 ? 'VULNERABLE'
-    : pct >= 30 ? 'CRITICAL'
-    : 'COMPROMISED';
+  // Single band lookup — drives chip text, tier badge, and metric colours.
+  const band  = bandForPct(pct);
+  const color = BAND_COLORS[band];
 
-  // Tier badge + score circle colours
-  let tierClass, tierText;
-  if      (pct >= 90) { tierClass = 'gold';    tierText = 'SECURE — Recommended for Production'; }
-  else if (pct >= 75) { tierClass = 'silver';  tierText = 'HARDENED — Limited Production Use'; }
-  else if (pct >= 60) { tierClass = 'bronze';  tierText = 'VULNERABLE — Testnet / Limited Use Only'; }
-  else if (pct >= 30) { tierClass = 'unrated'; tierText = 'CRITICAL — Not Recommended'; }
-  else                { tierClass = 'unrated'; tierText = 'COMPROMISED — Immediate Action Required'; }
+  // Risk chip label (same string as band).
+  document.getElementById('riskChip').textContent = band;
 
+  // Tier badge: class == band so .tier-badge.{BAND} CSS fires the right hue.
+  const badgeText = {
+    EXEMPLARY:   'EXEMPLARY — Best-in-Class',
+    SECURE:      'SECURE — Recommended for Production',
+    HARDENED:    'HARDENED — Limited Production Use',
+    VULNERABLE:  'VULNERABLE — Testnet / Limited Use Only',
+    CRITICAL:    'CRITICAL — Not Recommended',
+    COMPROMISED: 'COMPROMISED — Immediate Action Required',
+  }[band];
   const badge = document.getElementById('tierBadge');
-  badge.className = `tier-badge ${tierClass}`;
-  badge.textContent = tierText;
+  badge.className   = `tier-badge ${band}`;
+  badge.textContent = badgeText;
 
-  // Metrics
+  // Metrics — Controls Passing + Critical Gaps stay plain text; Risk Level
+  // adopts the band colour so the trio reads as one composite signal.
   document.getElementById('controlsPassing').textContent =
     data.filter(d => d.score > 0).length;
   document.getElementById('criticalGaps').textContent =
     data.filter(d => d.score === 0).length;
 
+  // Risk-level wording deliberately stays at 4 tiers (LOW/MED/HIGH/CRIT)
+  // — it's a separate axis from the 6 band names.  Threshold cutpoints
+  // updated to align with the new bands.
   const riskEl = document.getElementById('riskLevel');
-  riskEl.textContent =
-    pct < 60 ? 'CRITICAL' : pct < 75 ? 'HIGH' : pct < 90 ? 'MEDIUM' : 'LOW';
-  riskEl.style.color =
-    pct < 60 ? 'var(--accent-danger)' : pct < 75 ? 'var(--accent-amber)' :
-    pct < 90 ? 'var(--accent-info)'   : 'var(--accent-success)';
+  const riskWord =
+    pct >= 90 ? 'LOW'
+    : pct >= 70 ? 'LOW'
+    : pct >= 50 ? 'MEDIUM'
+    : pct >= 30 ? 'HIGH'
+    : 'CRITICAL';
+  riskEl.textContent = riskWord;
+  riskEl.style.color = color;
 }
 
 // ── Controls grid ──────────────────────────────────────────────────────────

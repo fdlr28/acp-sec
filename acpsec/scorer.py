@@ -12,12 +12,19 @@ from .models import (
     Severity,
 )
 
+# Score bands.  Sorted DESCENDING by threshold so ScoringEngine.band() can
+# pick the first match.  Six-tier scheme (was five pre-v0.3.1) — the old
+# 30-pt floor for CRITICAL felt punitive for mid-tier agents that scored
+# 30-49, so we split the band: 10-29 stays CRITICAL, 30-49 is now
+# VULNERABLE.  Top tier EXEMPLARY (90+) is new — separates "production
+# ready" agents (70+) from "best-in-class" (90+).
 SCORE_BANDS = [
-    (90, "SECURE", "Production-ready with active monitoring"),
-    (70, "HARDENED", "Minor gaps present, low overall risk"),
-    (50, "VULNERABLE", "Known exploitable weaknesses — remediate before production"),
-    (30, "CRITICAL", "Multiple high-severity issues — do not deploy"),
-    (0, "COMPROMISED", "Fundamental security failures — immediate halt required"),
+    (90, "EXEMPLARY",   "Best-in-class — sets the bar for the industry"),
+    (70, "SECURE",      "Production-ready with active monitoring"),
+    (50, "HARDENED",    "Minor gaps present, low overall risk"),
+    (30, "VULNERABLE",  "Known exploitable weaknesses — remediate before production"),
+    (10, "CRITICAL",    "Multiple high-severity issues — do not deploy"),
+    (0,  "COMPROMISED", "Fundamental security failures — immediate halt required"),
 ]
 
 # Consistency contract — NOT a runtime multiplier.

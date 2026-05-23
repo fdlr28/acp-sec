@@ -332,7 +332,8 @@ class TestOptInScoring:
         assert result.max_score == 25.0     # 15 + 10
         assert result.final_score == 25.0
         assert result.score_pct == 100.0
-        assert result.band == "SECURE"
+        # v0.3.1 introduced the EXEMPLARY tier at 90+, demoting SECURE to 70-89.
+        assert result.band == "EXEMPLARY"
 
 
 # ---------------------------------------------------------------------------

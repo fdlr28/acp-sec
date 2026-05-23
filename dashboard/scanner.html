@@ -398,8 +398,11 @@
       padding: 0.35rem 0.75rem;
       border-radius: 6px;
     }
+    /* Six-band palette — keep in lock-step with RING_COLORS / BAND_COLORS
+       in the JS below and with the dashboard's tier-badge classes. */
+    .score-band.EXEMPLARY   { background: rgba(0,82,255,.15);   color: #0052FF; }
     .score-band.SECURE      { background: rgba(0,192,135,.15);  color: #00C087; }
-    .score-band.HARDENED    { background: rgba(0,82,255,.15);  color: #0052FF; }
+    .score-band.HARDENED    { background: rgba(240,192,0,.18);  color: #B89200; }
     .score-band.VULNERABLE  { background: rgba(245,166,35,.15); color: #F5A623; }
     .score-band.CRITICAL    { background: rgba(255,107,0,.15);  color: #FF6B00; }
     .score-band.COMPROMISED { background: rgba(255,68,68,.20);  color: #FF4444; }
@@ -923,7 +926,7 @@
     <!-- Actions -->
     <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;padding-top:0.5rem">
       <button class="btn" onclick="backToStep1()">🔍 Scan another agent</button>
-      <button class="btn btn-primary" onclick="sendToDashboard()">📊 View Full Report →</button>
+      <button class="btn btn-primary" onclick="sendToDashboard()">📊 Open in Dashboard →</button>
       <button class="btn" onclick="downloadResult()">📥 Export JSON</button>
     </div>
 
@@ -1245,13 +1248,18 @@ function xOnlyScan() {
 
 // ── Render results ─────────────────────────────────────────────────────────
 
-const RING_COLORS = {
-  SECURE:      '#00C087',
-  HARDENED:    '#0052FF',
-  VULNERABLE:  '#F5A623',
-  CRITICAL:    '#FF6B00',
-  COMPROMISED: '#FF4444',
+// Single source of truth for band → color in scanner.html.  Mirrored in
+// acp-sec-dashboard.html.  Keep in lock-step with .score-band.{BAND} CSS
+// rules above and with the SCORE_BANDS table in acpsec/scorer.py.
+const BAND_COLORS = {
+  EXEMPLARY:   '#0052FF',   // Base blue — best in class
+  SECURE:      '#00C087',   // green — production ready
+  HARDENED:    '#F0C000',   // yellow — minor gaps
+  VULNERABLE:  '#F5A623',   // orange — exploitable
+  CRITICAL:    '#FF6B00',   // orange-red — do not deploy
+  COMPROMISED: '#FF4444',   // red — halt
 };
+const RING_COLORS = BAND_COLORS;   // alias for back-compat
 
 function _renderResults(d) {
   const pct = d.score_pct || (d.final_score || 0);
@@ -1300,7 +1308,12 @@ function _renderResults(d) {
   bandEl.className   = `score-band ${d.band || ''}`;
 
   // Metrics — controls count is dynamic (PUB dim took us from 30 → 38).
-  document.getElementById('metricScore').textContent      = `${Math.round(pct)}`;
+  // The Final-Score number adopts the band's color so the eye lands on
+  // the score and the band chip at the same hue.
+  const bandColor = BAND_COLORS[d.band] || '#0052FF';
+  const scoreEl = document.getElementById('metricScore');
+  scoreEl.textContent      = `${Math.round(pct)}`;
+  scoreEl.style.color      = bandColor;
   document.getElementById('metricCritFails').textContent  = d.critical_fails ?? '—';
   document.getElementById('metricSecHdrs').textContent    = `${d.sec_header_count ?? 0}/9`;
   const checksEl = document.getElementById('metricChecks');
