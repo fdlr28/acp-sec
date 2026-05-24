@@ -7,14 +7,16 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
   <style>
     /* ── Design tokens (Base blockchain brand) ────────────────────────────── */
+    /* Light-mode palette per v0.3.1 spec.  Used only when body has
+       .light-mode class — otherwise the dark override below applies. */
     :root {
-      --bg-primary:    #ffffff;
-      --bg-secondary:  #f5f5f5;
-      --bg-tertiary:   #eeeeee;
-      --border:        #E5E7EB;
+      --bg-primary:    #FFFFFF;
+      --bg-secondary:  #F5F5F5;
+      --bg-tertiary:   #EBEBEB;
+      --border:        #E0E0E0;
       --border-light:  #F3F4F6;
       --text-primary:  #0A0B0D;
-      --text-secondary:#8A919E;
+      --text-secondary:#4A4A4A;
       --text-tertiary: #9CA3AF;
       --accent-base:   #0052FF;
       --accent-success:#00C087;
@@ -23,7 +25,7 @@
       --accent-info:   #0052FF;
       --shadow:        0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
     }
-    body.dark-mode,
+    /* Dark is the default — applied whenever .light-mode is absent. */
     body:not(.light-mode) {
       --bg-primary:    #0A0B0D;
       --bg-secondary:  #1C1D1F;
@@ -118,8 +120,10 @@
       display: flex; align-items: center; justify-content: center;
       transition: background .15s;
     }
+    /* Icon == what you'd switch TO.  Dark is default, so the dark-mode
+       button advertises ☀️ (click to go light).  Light mode reverses. */
     .theme-toggle::after { content: '☀️'; }
-    .dark-mode .theme-toggle::after { content: '🌙'; }
+    body.light-mode .theme-toggle::after { content: '🌙'; }
 
     /* ── Layout ─────────────────────────────────────────────────────────────── */
     .container {
@@ -948,12 +952,25 @@
 'use strict';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
+//
+// CSS contract: dark is the default applied state (via the
+// `body:not(.light-mode)` selector).  To switch themes, we add/remove the
+// `.light-mode` class on <body>.  ONE shared localStorage key,
+// `acpsec_theme`, so all three pages (dashboard, scanner, monitor) restore
+// the same theme.  Values: 'light' | 'dark' (default 'dark' when unset).
 
-const DARK_KEY = 'acpsec-dark';
-if (localStorage.getItem(DARK_KEY) === '1') document.body.classList.add('dark-mode');
+const THEME_KEY = 'acpsec_theme';
+
+// Restore saved preference before first paint of body content.
+if (localStorage.getItem(THEME_KEY) === 'light') {
+  document.body.classList.add('light-mode');
+}
+
 function toggleTheme() {
-  const on = document.body.classList.toggle('dark-mode');
-  localStorage.setItem(DARK_KEY, on ? '1' : '0');
+  const isLight = document.body.classList.toggle('light-mode');
+  localStorage.setItem(THEME_KEY, isLight ? 'light' : 'dark');
+  // Rebuild any Chart.js instance so its label/grid colours pick up the
+  // new tokens (Chart.js reads computed CSS only at construction time).
   if (radarChart) { radarChart.destroy(); buildRadar(_lastControls); }
 }
 
@@ -1366,7 +1383,9 @@ function _renderSecHeaders(found) {
 
 // Radar chart
 function _radarColors() {
-  const dark = document.body.classList.contains('dark-mode');
+  // Dark is the default state (no body class).  Light mode is signalled
+  // by the .light-mode class — its ABSENCE means we're in dark.
+  const dark = !document.body.classList.contains('light-mode');
   return {
     grid: dark ? 'rgba(255,255,255,.08)' : '#d9d7ce',
     ticks: dark ? '#a8a5a0' : '#6b6a66',

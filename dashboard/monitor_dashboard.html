@@ -9,14 +9,16 @@
     /* ── Reset & tokens (Base blockchain brand) ─────────────────────────────── */
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
+    /* Light-mode palette per v0.3.1 spec.  Applied when body.light-mode
+       is set; otherwise the dark override below wins. */
     :root {
-      --bg-primary:    #ffffff;
-      --bg-secondary:  #f5f5f5;
-      --bg-tertiary:   #eeeeee;
+      --bg-primary:    #FFFFFF;
+      --bg-secondary:  #F5F5F5;
+      --bg-tertiary:   #EBEBEB;
       --text-primary:  #0A0B0D;
-      --text-secondary:#8A919E;
+      --text-secondary:#4A4A4A;
       --text-tertiary: #9CA3AF;
-      --border:        #E5E7EB;
+      --border:        #E0E0E0;
       --border-light:  #F3F4F6;
 
       --accent-base:   #0052FF;
@@ -31,7 +33,7 @@
       --info-light:    #1a2a4a;
     }
 
-    body.dark-mode,
+    /* Dark is the default — applied whenever .light-mode is absent. */
     body:not(.light-mode) {
       --bg-primary:    #0A0B0D;
       --bg-secondary:  #1C1D1F;
@@ -864,17 +866,27 @@
       return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
     }
 
+    // Theme — single shared localStorage key (acpsec_theme) across all
+    // 3 dashboard pages so the chosen theme follows the user.
+    // CSS contract: dark is the default applied state; .light-mode opts
+    // into light.  Button label shows "what you'd switch TO" — ☀️ Light
+    // when currently dark, 🌙 Dark when currently light.
+    const THEME_KEY = 'acpsec_theme';
+
     function toggleDark() {
-      const on = document.body.classList.toggle('dark-mode');
-      localStorage.setItem('monitor-theme', on ? 'dark' : 'light');
-      document.getElementById('darkToggle').textContent = on ? '☀️ Light' : '🌙 Dark';
+      const isLight = document.body.classList.toggle('light-mode');
+      localStorage.setItem(THEME_KEY, isLight ? 'light' : 'dark');
+      document.getElementById('darkToggle').textContent =
+        isLight ? '🌙 Dark' : '☀️ Light';
     }
 
-    // Default to dark mode
-    if (localStorage.getItem('monitor-theme') !== 'light') {
-      document.body.classList.add('dark-mode');
-      document.getElementById('darkToggle').textContent = '☀️ Light';
-    }
+    // Restore preference on load.  Dark default when nothing stored.
+    (() => {
+      const isLight = localStorage.getItem(THEME_KEY) === 'light';
+      if (isLight) document.body.classList.add('light-mode');
+      document.getElementById('darkToggle').textContent =
+        isLight ? '🌙 Dark' : '☀️ Light';
+    })();
   </script>
 </body>
 </html>

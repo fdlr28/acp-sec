@@ -9,14 +9,16 @@
     /* ── Reset & tokens (Base blockchain brand) ─────────────────────────────── */
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
+    /* Light-mode palette per v0.3.1 spec.  Applied when body.light-mode
+       is set; otherwise the dark override below wins. */
     :root {
-      --bg-primary:    #ffffff;
-      --bg-secondary:  #f5f5f5;
-      --bg-tertiary:   #eeeeee;
+      --bg-primary:    #FFFFFF;
+      --bg-secondary:  #F5F5F5;
+      --bg-tertiary:   #EBEBEB;
       --text-primary:  #0A0B0D;
-      --text-secondary:#8A919E;
+      --text-secondary:#4A4A4A;
       --text-tertiary: #9CA3AF;
-      --border:        #E5E7EB;
+      --border:        #E0E0E0;
       --border-light:  #F3F4F6;
 
       --accent-base:   #0052FF;
@@ -35,7 +37,7 @@
       --ring-circ: 603.19;  /* 2π × 96 */
     }
 
-    body.dark-mode,
+    /* Dark is the default — applied whenever .light-mode is absent. */
     body:not(.light-mode) {
       --bg-primary:    #0A0B0D;
       --bg-secondary:  #1C1D1F;
@@ -1556,7 +1558,8 @@ function renderAudit(data) {
 // ── Radar chart (rebuilt on theme change) ─────────────────────────────────
 
 function chartThemeColors() {
-  const dark = document.body.classList.contains('dark-mode');
+  // Dark is the default state; .light-mode opts in to light.
+  const dark = !document.body.classList.contains('light-mode');
   return {
     grid:   dark ? 'rgba(255,255,255,.08)' : '#d9d7ce',
     ticks:  dark ? '#a8a5a0' : '#6b6a66',
@@ -2046,11 +2049,18 @@ function setupDragDrop() {
 
 // ── Dark mode (rebuilds chart so colours update) ───────────────────────────
 
+// Single shared key across all 3 dashboard pages (scanner, dashboard, monitor).
+// Values: 'light' | 'dark'.  Default 'dark' when unset.
+const THEME_KEY = 'acpsec_theme';
+
 function toggleTheme() {
-  document.body.classList.toggle('dark-mode');
-  const isDark = document.body.classList.contains('dark-mode');
-  localStorage.setItem('theme', isDark ? 'dark' : 'light');
-  document.getElementById('themeToggleBtn').classList.toggle('active', isDark);
+  // CSS contract: dark is the default state; light is opt-in via the
+  // .light-mode class on <body>.  The slider's .active modifier still
+  // indicates dark (blue pill + dot-right), so we set it to the inverse
+  // of isLight.
+  const isLight = document.body.classList.toggle('light-mode');
+  localStorage.setItem(THEME_KEY, isLight ? 'light' : 'dark');
+  document.getElementById('themeToggleBtn').classList.toggle('active', !isLight);
 
   // Rebuild radar with updated theme colours
   if (scoreChart) scoreChart.destroy();
@@ -2107,11 +2117,17 @@ function showToast(msg, type = 'info') {
 }
 
 // ── Restore theme preference & initialise ─────────────────────────────────
+// Reads the single shared key `acpsec_theme` so scanner/dashboard/monitor
+// stay in lock-step.  Dark is the default when nothing is stored.
 
-if (localStorage.getItem('theme') !== 'light') {
-  document.body.classList.add('dark-mode');
-  document.getElementById('themeToggleBtn').classList.add('active');
-}
+(() => {
+  const saved = localStorage.getItem(THEME_KEY);
+  const isLight = saved === 'light';
+  if (isLight) document.body.classList.add('light-mode');
+  // Slider's .active modifier means "dark mode showing", so toggle it
+  // OFF when the user previously chose light.
+  document.getElementById('themeToggleBtn').classList.toggle('active', !isLight);
+})();
 
 initDashboard();
 </script>
