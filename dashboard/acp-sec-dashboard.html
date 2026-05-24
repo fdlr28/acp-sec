@@ -1397,17 +1397,39 @@ function animateRing(pct) {
 
 // ── Update all score-derived UI in one pass ────────────────────────────────
 
-function updateScores(data) {
-  const totalScore = data.reduce((s, d) => s + (d.score || 0), 0);
-  const totalMax   = data.reduce((s, d) => s + (d.max   || 0), 0);
-  const pct        = totalMax > 0 ? Math.round((totalScore / totalMax) * 100) : 0;
+/**
+ * Update every score-derived UI element on the page.
+ *
+ * @param {Array}  data     controls list, each { ctrl, score, max, ... }
+ * @param {Object} [apiTruth] optional authoritative score from the API.
+ *        When present, its pct/band wins over any recompute below.  The
+ *        scanner backend already applies CRITICAL_PENALTY (-5 per
+ *        unmitigated CRITICAL fail), so naïvely summing c.score/c.max
+ *        from the controls array would silently drop the penalty and
+ *        report a too-generous score (this is the 26-vs-9 bug from v0.3.1).
+ *        Caller from applyAPIData() passes { scorePct, band } harvested
+ *        from the API response.  The Edit-Scores commit flow calls
+ *        updateScores(newAudit) with no apiTruth — recompute is correct
+ *        there because the user just changed the inputs in-memory.
+ */
+function updateScores(data, apiTruth = null) {
+  let pct, band;
+  if (apiTruth && apiTruth.scorePct != null) {
+    pct  = Math.round(apiTruth.scorePct);
+    band = apiTruth.band || bandForPct(pct);
+  } else {
+    const totalScore = data.reduce((s, d) => s + (d.score || 0), 0);
+    const totalMax   = data.reduce((s, d) => s + (d.max   || 0), 0);
+    pct  = totalMax > 0 ? Math.round((totalScore / totalMax) * 100) : 0;
+    band = bandForPct(pct);
+  }
 
   // Ring + number
   document.getElementById('scoreNumber').textContent = pct;
   animateRing(pct);
 
-  // Single band lookup — drives chip text, tier badge, and metric colours.
-  const band  = bandForPct(pct);
+  // Reuse the colour for chip text / tier badge / metric below.  We
+  // already have `band` from above — no second lookup.
   const color = BAND_COLORS[band];
 
   // Risk chip label (same string as band).
@@ -1917,7 +1939,14 @@ function applyAPIData(data, opts = {}) {
 
   renderControls(dynControls);
   renderAudit(dynAudit);
-  updateScores(dynAudit);
+  // Pass the API's authoritative score so updateScores uses the
+  // CRITICAL_PENALTY-adjusted value (`data.score_pct`) and the API's
+  // `data.band`, instead of recomputing from raw c.score / c.max sums.
+  // Fixes the dashboard 26 vs scanner 9 discrepancy on COMPROMISED agents.
+  updateScores(dynAudit, {
+    scorePct: (data.score_pct != null) ? data.score_pct : data.final_score,
+    band:     data.band,
+  });
 
   if (scoreChart) scoreChart.destroy();
   buildChart(dynControls, dynAudit);
