@@ -16,6 +16,7 @@ from .checks import (
     run_input_validation_checks,
     run_mcp_checks,
     run_output_safety_checks,
+    run_plugin_checks,
     run_privilege_checks,
     run_x402_checks,
 )
@@ -38,15 +39,16 @@ DIMENSION_RUNNERS = {
 }
 
 OPTIONAL_DIMENSION_RUNNERS = {
-    "x402": ("X402", "x402 Protocol Posture", run_x402_checks),
-    "mcp": ("MCP", "MCP Server Security", run_mcp_checks),
+    "x402":   ("X402",   "x402 Protocol Posture",   run_x402_checks),
+    "mcp":    ("MCP",    "MCP Server Security",     run_mcp_checks),
+    "plugin": ("PLUGIN", "Skill-Plugin Security",   run_plugin_checks),
 }
 
 MAX_SCORES = {"AUTH": 15, "CTX": 20, "INJ": 20, "PRIV": 20, "OUT": 15, "GOV": 10}
 
 
 @click.group()
-@click.version_option("0.3.0", prog_name="acpsec")
+@click.version_option("0.3.1", prog_name="acpsec")
 def main() -> None:
     """ACP-SEC: AI Agent Security Assessment Framework."""
 
@@ -114,6 +116,19 @@ def main() -> None:
     default=False,
     help="Force-skip the MCP dimension even if mcp.enabled is true.",
 )
+@click.option(
+    "--plugin",
+    "plugin_only",
+    is_flag=True,
+    default=False,
+    help="Run ONLY the PLUGIN dimension. Requires plugin.enabled in the YAML.",
+)
+@click.option(
+    "--skip-plugin",
+    is_flag=True,
+    default=False,
+    help="Force-skip the PLUGIN dimension even if plugin.enabled is true.",
+)
 def check(
     config: Path,
     dim: tuple[str, ...],
@@ -124,6 +139,8 @@ def check(
     skip_x402: bool,
     mcp_only: bool,
     skip_mcp: bool,
+    plugin_only: bool,
+    skip_plugin: bool,
 ) -> None:
     """Run security checks against an AI agent."""
     try:
@@ -141,12 +158,14 @@ def check(
         if not client.health_check():
             console.print("[yellow]Warning: Agent health check failed. Proceeding with static checks.[/yellow]")
 
-    # --x402 / --azul / --mcp are mutually exclusive shortcuts.
-    if sum([x402_only, azul_only, mcp_only]) > 1:
-        console.print("[red]--x402, --azul, and --mcp are mutually exclusive.[/red]")
+    # --x402 / --azul / --mcp / --plugin are mutually exclusive shortcuts.
+    if sum([x402_only, azul_only, mcp_only, plugin_only]) > 1:
+        console.print(
+            "[red]--x402, --azul, --mcp, and --plugin are mutually exclusive.[/red]"
+        )
         sys.exit(2)
 
-    if x402_only or azul_only or mcp_only:
+    if x402_only or azul_only or mcp_only or plugin_only:
         # Skip the standard 6 dimensions entirely.
         selected_dims: set[str] = set()
     else:
@@ -200,6 +219,21 @@ def check(
                 dimension_results.append(mcp_result)
             except Exception as e:
                 console.print(f"  [red]Error in MCP: {e}[/red]")
+
+    # PLUGIN dimension — opt-in, runs only when cfg.plugin.enabled.
+    if not skip_plugin and (cfg.plugin.enabled or plugin_only):
+        if not cfg.plugin.enabled:
+            console.print(
+                "[yellow]--plugin requested but plugin.enabled is false in "
+                "the YAML. Set plugin.enabled: true to run the dimension.[/yellow]"
+            )
+        else:
+            console.print(f"  [dim]Checking PLUGIN...[/dim]", end="\r")
+            try:
+                plugin_result = run_plugin_checks(cfg, client)
+                dimension_results.append(plugin_result)
+            except Exception as e:
+                console.print(f"  [red]Error in PLUGIN: {e}[/red]")
 
     engine = ScoringEngine()
     assessment = engine.build_assessment(

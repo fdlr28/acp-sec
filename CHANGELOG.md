@@ -5,6 +5,83 @@ All notable changes to ACP-SEC are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-05-26
+
+### Added — Base MCP compatibility
+
+Targets the [Base MCP](https://blog.base.dev/introducing-base-mcp) skill-plugin
+partner programme.  Three additions land together: an OAuth-2.1 check inside
+the MCP dimension, a brand-new PLUGIN dimension, and an in-scanner "Base MCP
+Partner" badge that surfaces curated partners at glance.
+
+#### MCP-OAUTH-01 (2 pts, HIGH) — OAuth 2.1 implementation
+- `acpsec/checks/mcp.py`: new check inside the existing MCP dimension.
+  Inspects `mcp.auth.{oauth_version,pkce,token_rotation}` and the
+  system_prompt for soft mentions of "OAuth 2.1" / "PKCE" / "token rotation".
+  Full pass requires the hard config contract (2.1 + PKCE + rotation).
+  Partial credit: 2/3 pillars → 1 pt, 1/3 → 0.5, 0/3 → 0.
+- `acpsec/models.py`: `MCPAuthConfig` gains `oauth_version`, `pkce`,
+  `token_rotation` fields.  Existing configs without OAuth pass vacuously.
+- `acpsec/scorer.py`: MCP dimension weight bumped **10 → 12 pts**.  Agents
+  with `mcp.enabled: true` now score out of **112** (or 122 if also x402).
+- `examples/mcp_agent_compliant.yaml`: switched to `mechanism: oauth` with
+  2.1 + PKCE + rotation declared, now scores **12/12 SECURE**.
+
+#### PLUGIN dimension (3 pts, OPT-IN)
+- `acpsec/checks/plugin.py`: new `run_plugin_checks()` with three 1-pt
+  checks aligned with Base MCP's skill-plugin baseline:
+    - **MCP-PLUGIN-01** (1, MEDIUM) — plugin sandboxing documented
+    - **MCP-PLUGIN-02** (1, HIGH)   — plugin permission scoping
+    - **MCP-PLUGIN-03** (1, MEDIUM) — plugin input validation
+- `acpsec/models.py`: `PluginConfig` pydantic block + `AgentConfig.plugin`
+  field (defaults to disabled).
+- `acpsec/config_loader.py`: parses the top-level `plugin:` YAML block.
+- `acpsec/scorer.py`: `OPTIONAL_DIMENSION_WEIGHTS["PLUGIN"] = 3`.  Combined
+  ceiling for an agent that enables both MCP and PLUGIN: **115/100 + 15**.
+
+#### Scanner — "⚡ Base MCP Partner" badge
+- `dashboard/scanner.html`: renders the badge inline next to the band chip
+  whenever the scanned agent's `@handle` or `agent_name` (normalised — lower-
+  case, no `@`, no punctuation, suffix `defi|fi|protocol|labs` trimmed)
+  matches the curated `BASE_MCP_PARTNERS` set:
+  `morpho, moonwell, uniswap, avantisfi, bankrbot, aerodrome, virtuals_io`.
+  Tooltip: "This agent is listed as a Base MCP skill plugin partner."
+
+#### Benchmark
+- `reports/base_mcp_benchmark_may2026.json` — public-scanner ranking of the
+  five live partner sites.  Leaderboard (% of 114-pt max):
+
+  | # | Partner   | Score % | Band       |
+  |---|-----------|---------|------------|
+  | 1 | Morpho    |  42.6%  | VULNERABLE |
+  | 2 | Uniswap   |  21.3%  | CRITICAL   |
+  | 3 | Avantis   |  11.1%  | CRITICAL   |
+  | 4 | Moonwell  |  10.7%  | CRITICAL   |
+  | 5 | Aerodrome |   4.1%  | COMPROMISED|
+
+  Public-surface signals only — does NOT reflect private MCP server posture.
+
+### CLI
+- `acpsec check --plugin` runs only the PLUGIN dimension.
+- `acpsec check --skip-plugin` force-skips it even when enabled.
+- `--x402` / `--azul` / `--mcp` / `--plugin` are now mutually exclusive.
+- `acpsec --version` now reports `0.3.1`.
+
+### Tests
+- `tests/test_mcp.py`: +4 tests for MCP-OAUTH-01 (full pass, fail-when-no-2.1,
+  vacuous-pass-when-non-OAuth) and updated 10→12 assertions throughout.
+- `tests/test_plugin.py`: +10 tests covering each PLUGIN check, scoring
+  integration, opt-in gate, and YAML round-trip.
+- `tests/test_x402.py`: `test_optional_dimension_weights_table` updated for
+  the new `{X402: 10, MCP: 12, PLUGIN: 3}` shape.
+- Suite total: **134 / 134 pass** (was 120 + 14).
+
+### Sources
+- [Introducing Base MCP](https://blog.base.dev/introducing-base-mcp)
+- [Model Context Protocol — OAuth 2.1](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization)
+
+---
+
 ## [0.3.0] — 2026-05-17
 
 ### Added — MCP Server Security Module

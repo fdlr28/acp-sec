@@ -410,6 +410,20 @@
     .score-band.VULNERABLE  { background: rgba(245,166,35,.15); color: #F5A623; }
     .score-band.CRITICAL    { background: rgba(255,107,0,.15);  color: #FF6B00; }
     .score-band.COMPROMISED { background: rgba(255,68,68,.20);  color: #FF4444; }
+
+    /* v0.3.1 — Base MCP Partner badge.  Blue-on-blue pill with the
+       Base brand colour; cursor:help surfaces the title tooltip on hover. */
+    .base-mcp-badge {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.3rem 0.75rem;
+      font-size: 0.78rem; font-weight: 600;
+      background: rgba(0,82,255,.12); color: #0052FF;
+      border: 1px solid rgba(0,82,255,.35);
+      border-radius: 999px;
+      cursor: help;
+      letter-spacing: .02em;
+    }
+    .base-mcp-badge[hidden] { display: none; }
     .score-verdict { font-size: 0.84rem; color: var(--text-secondary); font-style: italic; }
     .score-url     { font-size: 0.76rem; color: var(--text-tertiary); word-break: break-all; }
 
@@ -874,6 +888,13 @@
             </div>
           </div>
           <div class="score-band" id="resBand">—</div>
+          <!-- v0.3.1 — "⚡ Base MCP Partner" badge.  JS sets hidden=false
+               only when the scanned agent matches BASE_MCP_PARTNERS. -->
+          <div class="base-mcp-badge" id="baseMcpBadge" hidden
+               title="This agent is listed as a Base MCP skill plugin partner">
+            <span aria-hidden="true">⚡</span>
+            <span>Base MCP Partner</span>
+          </div>
           <div class="score-verdict" id="resVerdict"></div>
           <div class="score-url" id="resScanUrl"></div>
         </div>
@@ -1278,6 +1299,41 @@ const BAND_COLORS = {
 };
 const RING_COLORS = BAND_COLORS;   // alias for back-compat
 
+// v0.3.1 — Base MCP skill-plugin partner list.  Lowercase, no @, no spaces.
+// We normalise the scanned agent's @handle / display name and check
+// membership; on hit, the ⚡ Base MCP Partner pill is revealed.
+const BASE_MCP_PARTNERS = new Set([
+  'morpho', 'moonwell', 'uniswap', 'avantisfi',
+  'bankrbot', 'aerodrome', 'virtuals_io',
+]);
+
+/** Aggressively normalise an identifier so display variants ("@MoonwellDeFi",
+ *  "MoonwellDeFi", "moonwell defi") collapse onto the same key.  Strip
+ *  leading @, lowercase, drop everything that isn't [a-z0-9_]. */
+function _normalisePartnerKey(s) {
+  return (s || '')
+    .toString()
+    .trim()
+    .replace(/^@/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '');
+}
+
+/** Return true iff the scanned agent matches any Base MCP partner. */
+function _isBaseMcpPartner(d) {
+  const candidates = [d.x_username, d.agent_name];
+  for (const c of candidates) {
+    const key = _normalisePartnerKey(c);
+    if (!key) continue;
+    if (BASE_MCP_PARTNERS.has(key)) return true;
+    // Some partner handles include "defi" / "fi" suffixes ("MoonwellDeFi",
+    // "AerodromeFi") that the static list doesn't carry — strip and retry.
+    const trimmed = key.replace(/(defi|fi|protocol|labs)$/, '');
+    if (trimmed && BASE_MCP_PARTNERS.has(trimmed)) return true;
+  }
+  return false;
+}
+
 function _renderResults(d) {
   const pct = d.score_pct || (d.final_score || 0);
 
@@ -1323,6 +1379,11 @@ function _renderResults(d) {
   const bandEl = document.getElementById('resBand');
   bandEl.textContent = d.band || '—';
   bandEl.className   = `score-band ${d.band || ''}`;
+
+  // v0.3.1 — reveal the ⚡ Base MCP Partner pill if @handle / display name
+  // matches the curated partner list.  Hidden otherwise.
+  const partnerBadge = document.getElementById('baseMcpBadge');
+  if (partnerBadge) partnerBadge.hidden = !_isBaseMcpPartner(d);
 
   // Metrics — controls count is dynamic (PUB dim took us from 30 → 38).
   // The Final-Score number adopts the band's color so the eye lands on

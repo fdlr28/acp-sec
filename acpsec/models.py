@@ -190,6 +190,13 @@ class MCPAuthConfig(BaseModel):
     mechanism: str = "bearer"             # bearer | api_key | oauth | mtls
     tool_scoping: bool = False            # MCP-AUTH-02: per-user tool authorization
 
+    # v0.3.1 — OAuth 2.1 posture (MCP-OAUTH-01).  Only inspected when
+    # mechanism == "oauth".  Aligned with Base MCP's OAuth 2.1 + PKCE
+    # requirements for skill-plugin partners.
+    oauth_version: str = ""               # "2.1" expected for full score
+    pkce: bool = False                    # PKCE (RFC 7636) — required for 2.1
+    token_rotation: bool = False          # refresh-token rotation on use
+
 
 class MCPAccessConfig(BaseModel):
     """Resource access control for MCP tools."""
@@ -208,9 +215,10 @@ class MCPConfig(BaseModel):
     """
     MCP (Model Context Protocol) server posture declared by the agent.
 
-    When `enabled=true`, ACP-SEC runs the MCP dimension (10 pts) on top of
-    the standard 100-pt scoring budget.  When disabled (or absent), the
-    dimension is skipped entirely and total score stays at /100.
+    When `enabled=true`, ACP-SEC runs the MCP dimension (12 pts as of
+    v0.3.1) on top of the standard 100-pt scoring budget.  When disabled
+    (or absent), the dimension is skipped entirely and total score stays
+    at /100.
     """
     enabled: bool = False
     server_url: str = ""
@@ -218,6 +226,20 @@ class MCPConfig(BaseModel):
     access: MCPAccessConfig = Field(default_factory=MCPAccessConfig)
     audit: MCPAuditConfig = Field(default_factory=MCPAuditConfig)
     prompt_injection_protection: bool = False  # MCP-INJ-01
+
+
+class PluginConfig(BaseModel):
+    """
+    Skill-plugin posture (v0.3.1).
+
+    For agents that expose skills/plugins to a host runtime such as Base
+    MCP.  Three booleans drive three checks (1 pt each) and the dimension
+    is opt-in via `enabled`.
+    """
+    enabled: bool = False
+    sandboxed: bool = False             # MCP-PLUGIN-01: plugin sandboxing documented
+    permission_scoping: bool = False    # MCP-PLUGIN-02: plugin permission scoping
+    input_validation: bool = False      # MCP-PLUGIN-03: plugin input validation
 
 
 class AgentConfig(BaseModel):
@@ -238,5 +260,6 @@ class AgentConfig(BaseModel):
     owner: str = ""
     x402: X402Config = Field(default_factory=X402Config)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    plugin: PluginConfig = Field(default_factory=PluginConfig)
 
     model_config = {"populate_by_name": True}

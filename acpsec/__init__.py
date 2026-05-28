@@ -1,5 +1,5 @@
 """ACP-SEC: AI Agent Communication Protocol Security Assessment Framework."""
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from .catalogue import get_check_catalogue, get_dimension_catalogue  # noqa: F401

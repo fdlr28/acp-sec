@@ -51,8 +51,9 @@ DIMENSION_WEIGHTS: dict[str, int] = {
 # score/100.  The reporter renders `result.max_score` directly so the
 # denominator is always accurate.
 OPTIONAL_DIMENSION_WEIGHTS: dict[str, int] = {
-    "X402": 10,
-    "MCP": 10,
+    "X402":   10,
+    "MCP":    12,   # v0.3.1 — bumped from 10 to add MCP-OAUTH-01 (2 pts)
+    "PLUGIN":  3,   # v0.3.1 — skill-plugin security (Base MCP partner alignment)
 }
 
 CRITICAL_PENALTY = 5  # deducted per unmitigated CRITICAL failure

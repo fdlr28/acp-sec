@@ -45,8 +45,11 @@ mcp:
   prompt_injection_protection: true                  # MCP-INJ-01
   auth:
     required: true                                   # MCP-AUTH-01
-    mechanism: bearer                                # MCP-AUTH-01
+    mechanism: oauth                                 # MCP-AUTH-01 (Base MCP baseline)
     tool_scoping: true                               # MCP-AUTH-02
+    oauth_version: "2.1"                             # MCP-OAUTH-01 (v0.3.1)
+    pkce: true                                       # MCP-OAUTH-01 (v0.3.1)
+    token_rotation: true                             # MCP-OAUTH-01 (v0.3.1)
   access:
     resource_isolation: true                         # MCP-PRIV-01
     sandbox_mode: true                               # MCP-PRIV-01

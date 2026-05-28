@@ -47,14 +47,19 @@ from mock_mcp_server import MockMCPServer
 # ---------------------------------------------------------------------------
 
 def _compliant_mcp() -> MCPConfig:
+    # v0.3.1 — compliant fixture now exercises the OAuth-2.1 path so
+    # MCP-OAUTH-01 gets full credit (rather than passing vacuously).
     return MCPConfig(
         enabled=True,
         server_url="https://mcp.example.com:8443",
         prompt_injection_protection=True,
         auth=MCPAuthConfig(
             required=True,
-            mechanism="bearer",
+            mechanism="oauth",
             tool_scoping=True,
+            oauth_version="2.1",
+            pkce=True,
+            token_rotation=True,
         ),
         access=MCPAccessConfig(
             resource_isolation=True,
@@ -77,14 +82,20 @@ def _compliant_agent() -> AgentConfig:
 
 
 def _misconfigured_mcp() -> MCPConfig:
+    # Claims OAuth but with NO 2.1 / NO PKCE / NO rotation, so MCP-OAUTH-01
+    # has something to fail against (vs. mechanism="none" which would make
+    # OAUTH pass vacuously).
     return MCPConfig(
         enabled=True,
         server_url="",
         prompt_injection_protection=False,
         auth=MCPAuthConfig(
             required=False,
-            mechanism="none",
+            mechanism="oauth",
             tool_scoping=False,
+            oauth_version="",
+            pkce=False,
+            token_rotation=False,
         ),
         access=MCPAccessConfig(
             resource_isolation=False,
@@ -107,7 +118,7 @@ def _misconfigured_agent() -> AgentConfig:
 
 
 # ---------------------------------------------------------------------------
-# Static checks — compliant agent should pass all (10/10)
+# Static checks — compliant agent should pass all (12/12 as of v0.3.1)
 # ---------------------------------------------------------------------------
 
 class TestMCPChecksCompliant:
@@ -115,9 +126,17 @@ class TestMCPChecksCompliant:
 
     def test_all_checks_pass(self):
         result = run_mcp_checks(_compliant_agent())
-        assert result.score == 10.0
-        assert result.max_score == 10.0
+        assert result.score == 12.0
+        assert result.max_score == 12.0
         assert all(c.status == CheckStatus.PASS for c in result.checks)
+
+    def test_oauth01_oauth_2_1(self):
+        """v0.3.1: full OAuth 2.1 + PKCE + rotation → 2.0 pass."""
+        result = run_mcp_checks(_compliant_agent())
+        oauth01 = next(c for c in result.checks if c.check_id == "MCP-OAUTH-01")
+        assert oauth01.status == CheckStatus.PASS
+        assert oauth01.score == 2.0
+        assert oauth01.severity == Severity.HIGH
 
     def test_auth01_server_authentication(self):
         result = run_mcp_checks(_compliant_agent())
@@ -156,7 +175,7 @@ class TestMCPChecksCompliant:
 
 
 # ---------------------------------------------------------------------------
-# Static checks — misconfigured agent should fail all (0/10)
+# Static checks — misconfigured agent should fail all (0/12 as of v0.3.1)
 # ---------------------------------------------------------------------------
 
 class TestMCPChecksMisconfigured:
@@ -165,8 +184,25 @@ class TestMCPChecksMisconfigured:
     def test_all_checks_fail(self):
         result = run_mcp_checks(_misconfigured_agent())
         assert result.score == 0.0
-        assert result.max_score == 10.0
+        assert result.max_score == 12.0
         assert all(c.status == CheckStatus.FAIL for c in result.checks)
+
+    def test_oauth01_fails_when_claims_oauth_without_2_1(self):
+        """Claims OAuth but with no 2.1 / no PKCE / no rotation → FAIL."""
+        result = run_mcp_checks(_misconfigured_agent())
+        oauth01 = next(c for c in result.checks if c.check_id == "MCP-OAUTH-01")
+        assert oauth01.status == CheckStatus.FAIL
+        assert oauth01.score == 0.0
+
+    def test_oauth01_vacuous_pass_when_oauth_not_used(self):
+        """Non-OAuth mechanism → check passes vacuously with full 2.0 score."""
+        from acpsec.models import MCPAuthConfig as _A
+        cfg = _misconfigured_agent()
+        cfg.mcp.auth = _A(mechanism="bearer")    # not OAuth → N/A
+        result = run_mcp_checks(cfg)
+        oauth01 = next(c for c in result.checks if c.check_id == "MCP-OAUTH-01")
+        assert oauth01.status == CheckStatus.PASS
+        assert oauth01.score == 2.0
 
     def test_auth01_requires_auth(self):
         result = run_mcp_checks(_misconfigured_agent())
@@ -216,12 +252,14 @@ class TestMCPScoreIntegration:
     """MCP dimension plugs into the scoring engine correctly."""
 
     def test_mcp_optional_weight(self):
-        assert OPTIONAL_DIMENSION_WEIGHTS["MCP"] == 10
+        # v0.3.1: bumped from 10 → 12 to accommodate MCP-OAUTH-01.
+        assert OPTIONAL_DIMENSION_WEIGHTS["MCP"] == 12
 
     def test_total_max_score_with_mcp(self):
-        assert total_max_score(("MCP",)) == 110
+        # 100 (base) + 12 (MCP)
+        assert total_max_score(("MCP",)) == 112
 
-    def test_total_score_110_for_compliant(self):
+    def test_total_score_112_for_compliant(self):
         from acpsec.checks import run_auth_checks, run_context_checks
         from acpsec.checks import run_input_validation_checks as run_inj
         from acpsec.checks import run_output_safety_checks as run_out
@@ -240,8 +278,8 @@ class TestMCPScoreIntegration:
         ]
         engine = ScoringEngine()
         assessment = engine.build_assessment("MCP Agent", "0.3", dims)
-        # Max is 100 (base) + 10 (MCP) = 110
-        assert assessment.max_score == 110.0
+        # Max is 100 (base) + 12 (MCP) = 112  (v0.3.1)
+        assert assessment.max_score == 112.0
 
 
 # ---------------------------------------------------------------------------
@@ -274,21 +312,27 @@ class TestMCPConfigParsing:
         assert cfg.mcp.auth.required is False
         assert cfg.mcp.auth.tool_scoping is False
 
-    def test_compliant_scores_10_of_10(self, monkeypatch):
+    def test_compliant_scores_12_of_12(self, monkeypatch):
+        # v0.3.1: MCP dim is now 12 pts after MCP-OAUTH-01 was added.
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         path = _REPO_ROOT / "examples" / "mcp_agent_compliant.yaml"
         cfg = load_config(path)
         result = run_mcp_checks(cfg)
-        assert result.score == 10.0
-        assert result.max_score == 10.0
+        assert result.score == 12.0
+        assert result.max_score == 12.0
 
-    def test_misconfigured_scores_0_of_10(self, monkeypatch):
+    def test_misconfigured_scores_low(self, monkeypatch):
+        # Misconfigured YAML uses mechanism="none", so MCP-OAUTH-01 passes
+        # vacuously (2.0).  Other 5 checks fail → 2/12 raw.  Still below
+        # any meaningful threshold; the assertion is on max_score and
+        # that ALL other checks fail.
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         path = _REPO_ROOT / "examples" / "mcp_agent_misconfigured.yaml"
         cfg = load_config(path)
         result = run_mcp_checks(cfg)
-        assert result.score == 0.0
-        assert result.max_score == 10.0
+        assert result.max_score == 12.0
+        non_oauth = [c for c in result.checks if c.check_id != "MCP-OAUTH-01"]
+        assert all(c.status == CheckStatus.FAIL for c in non_oauth)
 
 
 # ---------------------------------------------------------------------------

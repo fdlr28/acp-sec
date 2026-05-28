@@ -303,7 +303,8 @@ class TestX402Checks:
 
 class TestOptInScoring:
     def test_optional_dimension_weights_table(self):
-        assert OPTIONAL_DIMENSION_WEIGHTS == {"X402": 10, "MCP": 10}
+        # v0.3.1 — MCP bumped 10→12 (added MCP-OAUTH-01), PLUGIN added at 3.
+        assert OPTIONAL_DIMENSION_WEIGHTS == {"X402": 10, "MCP": 12, "PLUGIN": 3}
 
     def test_total_max_score_without_optional(self):
         assert total_max_score() == 100
