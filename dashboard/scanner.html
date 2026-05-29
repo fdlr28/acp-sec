@@ -424,6 +424,43 @@
       letter-spacing: .02em;
     }
     .base-mcp-badge[hidden] { display: none; }
+
+    /* v0.3.2 — "Limited Scan" badge + warning banner for the no-website
+       case.  Amber palette so it reads as a warning, not an error. */
+    .limited-scan-badge {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.3rem 0.75rem;
+      font-size: 0.78rem; font-weight: 600;
+      background: rgba(245,166,35,.15);  color: #B57100;
+      border: 1px solid rgba(245,166,35,.45);
+      border-radius: 999px;
+      cursor: help;
+      letter-spacing: .02em;
+    }
+    .limited-scan-badge[hidden] { display: none; }
+
+    .limited-scan-banner {
+      display: flex; gap: 0.85rem; align-items: flex-start;
+      padding: 1rem 1.2rem;
+      margin: 1rem 0 1.5rem;
+      background: rgba(245,166,35,.10);
+      border: 1px solid rgba(245,166,35,.40);
+      border-left: 4px solid #F5A623;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      line-height: 1.55;
+      color: var(--text-primary);
+    }
+    .limited-scan-banner[hidden] { display: none; }
+    .limited-scan-banner__icon { font-size: 1.4rem; line-height: 1.2; flex-shrink: 0; }
+    .limited-scan-banner__title {
+      font-weight: 700; margin-bottom: 0.25rem; color: var(--text-primary);
+    }
+    .limited-scan-banner__body { color: var(--text-secondary); }
+    .limited-scan-banner__body code {
+      background: var(--bg-tertiary); padding: 1px 6px; border-radius: 4px;
+      font-size: .9em;
+    }
     .score-verdict { font-size: 0.84rem; color: var(--text-secondary); font-style: italic; }
     .score-url     { font-size: 0.76rem; color: var(--text-tertiary); word-break: break-all; }
 
@@ -864,6 +901,24 @@
   <!-- ── Step 3: Results ────────────────────────────────────────────────────── -->
   <div id="step3Container" style="display:none">
 
+    <!-- v0.3.2 — Limited-Scan warning banner.  Shown only when the
+         backend returned data.limited_scan === true (no dedicated website
+         found, social-media URL rejected, etc.). -->
+    <div class="limited-scan-banner" id="limitedScanBanner" hidden role="alert">
+      <span class="limited-scan-banner__icon" aria-hidden="true">⚠️</span>
+      <div>
+        <div class="limited-scan-banner__title">No dedicated website found for this agent</div>
+        <div class="limited-scan-banner__body">
+          Security score is capped at <strong>20 / 100</strong> in limited-scan mode.
+          Only <code>AUTH</code> and <code>GOV</code> dimensions receive partial baseline credit;
+          <code>CTX</code>, <code>INJ</code>, <code>PRIV</code>, <code>OUT</code>, and <code>PUB</code>
+          require a website to assess and remain at 0.
+          <br>
+          <strong>Provide the agent's website URL for a full analysis.</strong>
+        </div>
+      </div>
+    </div>
+
     <!-- Score hero -->
     <div class="card" id="resultsHeroCard">
       <div class="results-hero">
@@ -894,6 +949,13 @@
                title="This agent is listed as a Base MCP skill plugin partner">
             <span aria-hidden="true">⚡</span>
             <span>Base MCP Partner</span>
+          </div>
+          <!-- v0.3.2 — Limited-Scan badge for the no-website case.  Sits
+               next to the band chip and the partner pill. -->
+          <div class="limited-scan-badge" id="limitedScanBadge" hidden
+               title="No dedicated agent website was provided. Most dimensions are unscored — provide a website URL for the full analysis.">
+            <span aria-hidden="true">⚠️</span>
+            <span>Limited Scan</span>
           </div>
           <div class="score-verdict" id="resVerdict"></div>
           <div class="score-url" id="resScanUrl"></div>
@@ -1272,16 +1334,21 @@ async function startScan() {
   }
 }
 
-// X-only fallback scan (ISSUE 3) — uses X bio/profile as the only signal.
-// Sends a minimal pseudo-URL `x://<username>` that the backend rejects today
-// but the UI surfaces a tailored message and limited score scaffold.
+// X-only "no-website" path.  Posts the twitter URL straight to the API;
+// the backend (see _is_social_media_url in dashboard/scanner.py) detects
+// the social-media host and short-circuits to the limited-scan stub.
+// Output is hard-capped at 20/100 with the ⚠️ Limited Scan badge on the
+// results card.
 function xOnlyScan() {
   const u = (_profile?.username || '').trim();
   if (!u) { showToast('No X username available', 'error'); return; }
   const fakeUrl = `https://twitter.com/${u}`;
   document.getElementById('targetUrlInput').value = fakeUrl;
   onUrlChange();
-  showToast('Will scan X profile page only — score will be limited (≤ 30 pts).', 'info', 5500);
+  showToast(
+    'No dedicated website — running limited scan. Score is capped at 20 / 100.',
+    'info', 5500,
+  );
 }
 
 // ── Render results ─────────────────────────────────────────────────────────
@@ -1384,6 +1451,16 @@ function _renderResults(d) {
   // matches the curated partner list.  Hidden otherwise.
   const partnerBadge = document.getElementById('baseMcpBadge');
   if (partnerBadge) partnerBadge.hidden = !_isBaseMcpPartner(d);
+
+  // v0.3.2 — Limited-Scan badge + banner.  Backend sets data.limited_scan
+  // when the URL is a social-media profile or no dedicated website was
+  // provided.  Surface both the pill (next to the band) and the explainer
+  // banner above the score hero so the cap is impossible to miss.
+  const limited     = d.limited_scan === true;
+  const limitedPill = document.getElementById('limitedScanBadge');
+  const limitedBnr  = document.getElementById('limitedScanBanner');
+  if (limitedPill) limitedPill.hidden = !limited;
+  if (limitedBnr)  limitedBnr.hidden  = !limited;
 
   // Metrics — controls count is dynamic (PUB dim took us from 30 → 38).
   // The Final-Score number adopts the band's color so the eye lands on

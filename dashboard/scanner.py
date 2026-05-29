@@ -1787,6 +1787,207 @@ def _pub(corpus: dict, soup: BeautifulSoup) -> list[dict]:
 # Main analysis entry point
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# No-website fallback — detect social-media URLs and short-circuit to a
+# "limited scan" stub.  Scanning x.com / twitter.com directly inherits all
+# of X's enterprise security headers, security.txt, policy pages, sitemap,
+# etc., and produces an inflated score that has nothing to do with the
+# agent itself.  Instead, when we land on a social-media host we return a
+# capped stub that explicitly signals "no dedicated website found".
+# ---------------------------------------------------------------------------
+
+# Hosts treated as social-media profiles, not as agent sites.  Includes the
+# common www/mobile subdomains.  t.co is X's short-link domain.
+SOCIAL_MEDIA_HOSTS: frozenset[str] = frozenset({
+    "x.com",            "www.x.com",        "mobile.x.com",
+    "twitter.com",      "www.twitter.com",  "mobile.twitter.com",
+    "t.co",
+})
+
+# Hard cap on the displayed final_score when no dedicated website was
+# found.  Even with friendly heuristics we never present > 20 / 100 for
+# an agent that hasn't published an inspectable site.
+LIMITED_SCAN_CAP: float = 20.0
+
+
+def _is_social_media_url(url: str) -> bool:
+    """True iff the URL points to an X/Twitter profile or shortlink.
+
+    Used BOTH on the input URL and on the post-redirect ``resp.url`` so a
+    301/302 from a custom domain to x.com is caught as well.
+    """
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host in SOCIAL_MEDIA_HOSTS
+
+
+def _build_limited_scan_result(
+    url: str,
+    agent_name: str,
+    *,
+    original_url: str = "",
+    reason: str = "social-media",
+) -> dict[str, Any]:
+    """Stub scan result for the "no dedicated website" case.
+
+    We invoke the standard per-dimension check functions with empty inputs
+    so the skeleton picks up every check ID automatically (including
+    future additions).  Every result is then forced to status=SKIP at
+    score 0, EXCEPT a single 2/3 partial credit on AUTH-01 when the agent
+    name is declared — that's the only signal we have without a website.
+
+    The displayed score is hard-capped at ``LIMITED_SCAN_CAP``.
+    """
+    empty_soup = BeautifulSoup("", "html.parser")
+    empty_corpus = {
+        "base": "", "root_text": "", "all_text": "",
+        "extra_pages": [], "extra_pages_count": 0,
+        "security_txt": {"present": False, "body": "", "url": ""},
+        "robots_sitemap": {"robots": "", "sitemap": "", "sitemap_urls": []},
+        "bounty": {"found": False, "evidence": []},
+        "framework": {"found": False, "strong": False, "evidence": []},
+        "pages_probed": [],
+    }
+
+    controls: list[dict] = []
+    controls.extend(_auth("", {}, empty_soup))
+    controls.extend(_ctx("",  {}, empty_soup))
+    controls.extend(_inj("",  {}, empty_soup))
+    controls.extend(_priv("", {}, empty_soup))
+    controls.extend(_out("",  {}, empty_soup))
+    controls.extend(_gov("",  {}, empty_soup))
+    controls.extend(_pub(empty_corpus, empty_soup))
+
+    skip_finding = (
+        "Not assessable — no dedicated website provided. "
+        "Scanner was given a social-media profile or no URL at all."
+    )
+    skip_evidence = ["Limited scan mode active — no public agent site to inspect."]
+    skip_recs = [
+        "Provide the agent's dedicated website URL for a full analysis.",
+        "Social-media profile pages are NOT a substitute for a security posture.",
+    ]
+    for c in controls:
+        c["score"]           = 0.0
+        c["status"]          = "skip"
+        c["finding"]         = skip_finding
+        c["evidence"]        = list(skip_evidence)
+        c["recommendations"] = list(skip_recs)
+        c["inferred"]        = True
+
+    # Partial credit across AUTH + GOV (the only two dimensions that DON'T
+    # require a website to make sense at all).  Spec: "AUTH (partial),
+    # GOV (partial); CTX/INJ/PRIV/OUT/PUB → 0".  Each partial mark below
+    # is a baseline assumption — NOT evidence — so the status is WARN and
+    # the finding makes the assumption explicit.
+    #
+    # AUTH-XX awards a small partial only when the agent has at least
+    # declared a name.  Otherwise we have literally nothing to score.
+    if agent_name and agent_name.strip():
+        # Per-check partials, picked to land roughly in the user's
+        # "Limited Scan should display ~10-20/100" target without ever
+        # exceeding the 20-point cap enforced below.
+        # Tuned to land in the user's "~15-20/100" target range when all
+        # AUTH+GOV partials are credited (AUTH ≈10/15, GOV ≈7/10, total
+        # ≈17/116 ≈ 15%).  The 20-point cap below catches any future drift.
+        AUTH_PARTIALS = {
+            "AUTH-01": (2.5, f"Agent name declared: '{agent_name}'."),
+            "AUTH-02": (1.5, "API auth enforcement assumed at baseline; unverifiable without a site."),
+            "AUTH-03": (1.5, "Session binding assumed at baseline; unverifiable without a site."),
+            "AUTH-04": (2.5, "Multi-agent trust posture assumed at baseline."),
+            "AUTH-05": (2.0, "Identity-spoof resistance assumed at baseline; unverifiable without a site."),
+        }
+        GOV_PARTIALS = {
+            "GOV-01": (2.0, "Logging assumed at baseline; no public evidence."),
+            "GOV-02": (1.5, "Anomaly alerting assumed at baseline; no public evidence."),
+            "GOV-03": (1.0, "Tamper-evident storage assumed at baseline; no public evidence."),
+            "GOV-04": (1.5, "Incident response baseline assumed; no security.txt observed."),
+            "GOV-05": (1.0, "Regular assessment baseline assumed; no public evidence."),
+        }
+        partials = {**AUTH_PARTIALS, **GOV_PARTIALS}
+        for c in controls:
+            mark = partials.get(c["ctrl"])
+            if not mark:
+                continue
+            score, finding = mark
+            c["score"]    = float(score)
+            c["status"]   = "warn"
+            c["finding"]  = finding
+            c["evidence"] = [
+                f"Limited-scan partial credit ({score}/{c['max']}).",
+                "No website signals — baseline assumption only.",
+            ]
+
+    raw_total   = sum(c["score"] for c in controls)
+    capped      = min(raw_total, LIMITED_SCAN_CAP)
+    total_max   = sum(c["max"]   for c in controls)
+    score_pct   = round(capped / total_max * 100, 1) if total_max else 0.0
+
+    # Band table mirrors acpsec.scorer.SCORE_BANDS — we hand-roll it here
+    # to avoid an import cycle / extra dep at module top.
+    if   score_pct >= 90: band, verdict = "EXEMPLARY",   "Best-in-class — sets the bar for the industry"
+    elif score_pct >= 70: band, verdict = "SECURE",      "Production-ready with active monitoring"
+    elif score_pct >= 50: band, verdict = "HARDENED",    "Minor gaps present, low overall risk"
+    elif score_pct >= 30: band, verdict = "VULNERABLE",  "Known exploitable weaknesses"
+    elif score_pct >= 10: band, verdict = "CRITICAL",    "Multiple high-severity issues — do not deploy"
+    else:                  band, verdict = "COMPROMISED", "Fundamental security failures"
+    # Replace the verdict with the limited-scan call-to-action.
+    verdict = (
+        "Scan limited — no website found. "
+        "Provide the agent's website URL for full analysis."
+    )
+
+    scan_ts = datetime.now(timezone.utc).isoformat()
+    return {
+        "ok": True,
+        "data": {
+            "agent_name":       agent_name or "unknown agent",
+            "agent_version":    "",
+            "band":             band,
+            "verdict":          verdict,
+            "final_score":      round(capped, 2),
+            "score_pct":        score_pct,
+            "timestamp":        scan_ts,
+            "controls":         controls,
+            "source":           "scanner",
+            "scan_url":         url,
+            "original_url":     original_url or url,
+            "security_headers": {},
+            "sec_header_count": 0,
+            "critical_fails":   0,
+            "fetch_warning":    "",
+            "methodology":      "limited-scan (no-website)",
+            "acpsec_available": False,
+            "scan_mode":        "limited",
+            "scan_duration_ms": 0,
+            "is_self_probe":    False,
+            # Flags consumed by scanner.html — surface the warning UI.
+            "limited_scan":     True,
+            "no_website":       True,
+            "limited_reason":   reason,
+            "score_cap":        LIMITED_SCAN_CAP,
+            "metadata": {
+                "target_url":       url,
+                "original_url":     original_url or url,
+                "parent_domain":    None,
+                "is_self_probe":    False,
+                "scan_timestamp":   scan_ts,
+                "scan_duration_ms": 0,
+                "parent_signals":   None,
+                "pages_probed":     [],
+                "pages_probed_count": 0,
+                "notes": [
+                    "No dedicated agent website detected.",
+                    "Scoring is capped at 20/100 in limited-scan mode.",
+                    "Most dimensions cannot be assessed without a website to inspect.",
+                ],
+            },
+        },
+    }
+
+
 def analyze_agent(url: str, agent_name: str = "", scan_mode: str = "root") -> dict[str, Any]:
     """Perform a heuristic website analysis and map findings to acpsec check scores.
 
@@ -1816,6 +2017,16 @@ def analyze_agent(url: str, agent_name: str = "", scan_mode: str = "root") -> di
     if scan_mode == "root":
         url = _normalize_to_root(url)
 
+    # ─── No-website fallback (v0.3.2) ───────────────────────────────────────
+    # If the input URL points at a social-media profile (x.com, twitter.com,
+    # t.co), short-circuit to the limited-scan stub before touching the
+    # network.  Otherwise scanning would inherit X's enterprise hardening
+    # and quote a ~40% score that has nothing to do with the agent.
+    if _is_social_media_url(url):
+        return _build_limited_scan_result(
+            url, agent_name, original_url=original_url, reason="social-media-input",
+        )
+
     resp, soup, fetch_warn = _fetch_website(url)
 
     if resp is None or soup is None:
@@ -1824,6 +2035,14 @@ def analyze_agent(url: str, agent_name: str = "", scan_mode: str = "root") -> di
         if suggestion:
             err += f" — try: {suggestion}"
         return {"ok": False, "error": err, "suggestion": suggestion}
+
+    # Second check: the input was a custom domain but it 301/302'd to a
+    # social-media host.  Treat that as "no website" too.
+    if _is_social_media_url(resp.url or ""):
+        return _build_limited_scan_result(
+            resp.url or url, agent_name,
+            original_url=original_url, reason="social-media-redirect",
+        )
 
     # Login-wall detection (ISSUE 2)
     if _is_login_wall(resp, soup):
