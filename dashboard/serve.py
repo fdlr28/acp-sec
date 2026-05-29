@@ -28,13 +28,13 @@ from typing import Any
 
 from flask import Flask, jsonify, request, send_file
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-PORT = int(os.environ.get("PORT", 5001))
+PORT = int(os.environ.get("PORT", 8080))
 
 DASHBOARD_HTML = Path(__file__).parent / "acp-sec-dashboard.html"
 SCANNER_HTML   = Path(__file__).parent / "scanner.html"
