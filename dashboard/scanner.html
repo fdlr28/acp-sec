@@ -461,6 +461,41 @@
       background: var(--bg-tertiary); padding: 1px 6px; border-radius: 4px;
       font-size: .9em;
     }
+
+    /* Inline suggestion strip — shown below the scan button when the
+       backend returns ok:false + a suggestion URL.  Replaces the old
+       blocking confirm() dialog with a non-dismissable inline card. */
+    .suggestion-strip {
+      display: flex; align-items: center; gap: 0.85rem; flex-wrap: wrap;
+      padding: 0.9rem 1.1rem;
+      margin-top: 1rem;
+      background: rgba(245,166,35,.08);
+      border: 1px solid rgba(245,166,35,.38);
+      border-left: 4px solid #F5A623;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      color: var(--text-primary);
+    }
+    .suggestion-strip[hidden] { display: none; }
+    .suggestion-strip__text { flex: 1; line-height: 1.5; }
+    .suggestion-strip__url  {
+      font-family: monospace; font-size: 0.85em;
+      background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px;
+    }
+    .suggestion-strip__btn {
+      padding: 0.4rem 1rem; font-size: 0.85rem; font-weight: 600;
+      background: #F5A623; color: #fff;
+      border: none; border-radius: 6px; cursor: pointer;
+      white-space: nowrap; flex-shrink: 0;
+      transition: background .15s;
+    }
+    .suggestion-strip__btn:hover { background: #d4881a; }
+    .suggestion-strip__dismiss {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-tertiary); font-size: 1.1rem; line-height: 1;
+      flex-shrink: 0; padding: 0 2px;
+    }
+    .suggestion-strip__dismiss:hover { color: var(--text-primary); }
     .score-verdict { font-size: 0.84rem; color: var(--text-secondary); font-style: italic; }
     .score-url     { font-size: 0.76rem; color: var(--text-tertiary); word-break: break-all; }
 
@@ -895,6 +930,19 @@
           🔬 Scan Agent
         </button>
       </div>
+
+      <!-- Inline suggestion strip — shown when the scan returns ok:false
+           AND a better URL was suggested (e.g. login wall on a sub-path).
+           JS populates the URL and wires the Try-button; dismiss hides it. -->
+      <div class="suggestion-strip" id="suggestionStrip" hidden>
+        <span class="suggestion-strip__text" id="suggestionText">—</span>
+        <button class="suggestion-strip__btn" id="suggestionBtn" type="button">
+          Try root domain →
+        </button>
+        <button class="suggestion-strip__dismiss" type="button"
+                onclick="document.getElementById('suggestionStrip').hidden=true"
+                aria-label="Dismiss">✕</button>
+      </div>
     </div>
   </div>
 
@@ -906,15 +954,14 @@
          found, social-media URL rejected, etc.). -->
     <div class="limited-scan-banner" id="limitedScanBanner" hidden role="alert">
       <span class="limited-scan-banner__icon" aria-hidden="true">⚠️</span>
-      <div>
-        <div class="limited-scan-banner__title">No dedicated website found for this agent</div>
-        <div class="limited-scan-banner__body">
-          Security score is capped at <strong>20 / 100</strong> in limited-scan mode.
-          Only <code>AUTH</code> and <code>GOV</code> dimensions receive partial baseline credit;
-          <code>CTX</code>, <code>INJ</code>, <code>PRIV</code>, <code>OUT</code>, and <code>PUB</code>
-          require a website to assess and remain at 0.
+      <div style="flex:1">
+        <div class="limited-scan-banner__title" id="limitedBannerTitle">No dedicated website found for this agent</div>
+        <div class="limited-scan-banner__body" id="limitedBannerBody">
+          Security score is capped at <strong>15 / 100</strong> in limited-scan mode.
+          Only <code>AUTH-01</code> receives partial credit (agent identity declared).
+          All other dimensions require a public website to assess.
           <br>
-          <strong>Provide the agent's website URL for a full analysis.</strong>
+          <strong>Provide the agent's website URL for a full 38-check scan.</strong>
         </div>
       </div>
     </div>
@@ -1088,6 +1135,35 @@ function setStep(n) {
   document.getElementById('step1Card').style.display     = n === 1 ? 'block' : 'none';
   document.getElementById('step2Card').style.display     = n === 2 ? 'block' : 'none';
   document.getElementById('step3Container').style.display= n === 3 ? 'block' : 'none';
+}
+
+/** Show the inline suggestion strip when a scan fails but a better URL is
+ *  available (e.g. login wall on bracky.app/home → suggest bracky.app).
+ *  Clicking "Try root domain →" fills the URL input with the suggestion and
+ *  immediately retriggers the scan so the user doesn't have to do anything. */
+function _showSuggestion(errorMsg, suggestionUrl) {
+  const strip = document.getElementById('suggestionStrip');
+  const text  = document.getElementById('suggestionText');
+  const btn   = document.getElementById('suggestionBtn');
+  if (!strip || !text || !btn) {
+    // fallback for any render without the strip
+    showToast(errorMsg, 'error', 8000);
+    return;
+  }
+  // Parse a pretty hostname for the button label.
+  let prettyHost = suggestionUrl;
+  try { prettyHost = new URL(suggestionUrl).hostname; } catch(_) {}
+  text.textContent = errorMsg;
+  btn.textContent  = `Try ${prettyHost} →`;
+  btn.onclick = () => {
+    strip.hidden = true;
+    document.getElementById('targetUrlInput').value = suggestionUrl;
+    onUrlChange();
+    startScan();
+  };
+  strip.hidden = false;
+  // Light toast so the user knows something happened.
+  showToast(errorMsg, 'error', 4000);
 }
 
 function backToStep1() {
@@ -1296,13 +1372,11 @@ async function startScan() {
 
     if (!res.ok || !json.ok) {
       const msg = json.error || 'Scan failed';
-      // If backend suggested an alternative URL, offer it inline
+      // Show an inline suggestion strip rather than a blocking confirm().
+      // The strip has a clickable "Try [url]" button that patches the input
+      // and retriggers the scan — no dialog required.
       if (json.suggestion) {
-        showToast(`${msg}`, 'error', 8000);
-        if (confirm(`${msg}\n\nWould you like to try the suggested URL instead?\n${json.suggestion}`)) {
-          document.getElementById('targetUrlInput').value = json.suggestion;
-          onUrlChange();
-        }
+        _showSuggestion(msg, json.suggestion);
         return;
       }
       throw new Error(msg);
@@ -1346,7 +1420,7 @@ function xOnlyScan() {
   document.getElementById('targetUrlInput').value = fakeUrl;
   onUrlChange();
   showToast(
-    'No dedicated website — running limited scan. Score is capped at 20 / 100.',
+    'No dedicated website — running limited scan. Score is capped at 15 / 100.',
     'info', 5500,
   );
 }
@@ -1460,7 +1534,38 @@ function _renderResults(d) {
   const limitedPill = document.getElementById('limitedScanBadge');
   const limitedBnr  = document.getElementById('limitedScanBanner');
   if (limitedPill) limitedPill.hidden = !limited;
-  if (limitedBnr)  limitedBnr.hidden  = !limited;
+  if (limitedBnr) {
+    limitedBnr.hidden = !limited;
+    if (limited) {
+      // Customise the banner title + body based on why the scan is limited.
+      const titleEl = document.getElementById('limitedBannerTitle');
+      const bodyEl  = document.getElementById('limitedBannerBody');
+      const reason  = d.limited_reason || '';
+      const rootTried = d.root_tried || '';
+
+      if (titleEl) {
+        titleEl.textContent =
+          reason === 'login-wall'
+            ? 'Login wall detected — switching to limited scan'
+            : 'No dedicated website found for this agent';
+      }
+      if (bodyEl) {
+        let rootNote = '';
+        if (rootTried) {
+          // Pull a pretty hostname for display
+          let pretty = rootTried;
+          try { pretty = new URL(rootTried).hostname; } catch(_) {}
+          rootNote = `<br>We automatically tried the root domain <code>${pretty}</code> — it also requires authentication.`;
+        }
+        bodyEl.innerHTML =
+          `Security score is capped at <strong>15 / 100</strong> in limited-scan mode.` +
+          ` Only <code>AUTH-01</code> receives partial credit (agent identity declared).` +
+          ` All other dimensions require a public website to assess.` +
+          rootNote +
+          `<br><strong>Provide the agent's website URL for a full 38-check scan.</strong>`;
+      }
+    }
+  }
 
   // Metrics — controls count is dynamic (PUB dim took us from 30 → 38).
   // The Final-Score number adopts the band's color so the eye lands on

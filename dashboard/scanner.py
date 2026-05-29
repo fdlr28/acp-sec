@@ -1804,10 +1804,11 @@ SOCIAL_MEDIA_HOSTS: frozenset[str] = frozenset({
     "t.co",
 })
 
-# Hard cap on the displayed final_score when no dedicated website was
-# found.  Even with friendly heuristics we never present > 20 / 100 for
-# an agent that hasn't published an inspectable site.
-LIMITED_SCAN_CAP: float = 20.0
+# Hard cap on the displayed final_score when no dedicated website was found.
+# Only AUTH-01 receives partial credit (agent name declared), so the realistic
+# top score is ~2/116 ≈ 2%.  The cap guards against any future drift and is
+# surfaced verbatim in the UI banner: "score capped at 15/100".
+LIMITED_SCAN_CAP: float = 15.0
 
 
 def _is_social_media_url(url: str) -> bool:
@@ -1829,14 +1830,19 @@ def _build_limited_scan_result(
     *,
     original_url: str = "",
     reason: str = "social-media",
+    root_tried: str | None = None,
 ) -> dict[str, Any]:
     """Stub scan result for the "no dedicated website" case.
 
     We invoke the standard per-dimension check functions with empty inputs
     so the skeleton picks up every check ID automatically (including
     future additions).  Every result is then forced to status=SKIP at
-    score 0, EXCEPT a single 2/3 partial credit on AUTH-01 when the agent
-    name is declared — that's the only signal we have without a website.
+    score 0, EXCEPT AUTH-01 (2/3 partial) when the agent name is declared —
+    that is the only observable fact without a website.
+
+    ``root_tried`` is the root-domain URL that was attempted as a fallback
+    when a login wall was encountered on a sub-path; the UI uses this to
+    tell the user exactly what was tried so they can supply a better URL.
 
     The displayed score is hard-capped at ``LIMITED_SCAN_CAP``.
     """
@@ -1877,48 +1883,23 @@ def _build_limited_scan_result(
         c["recommendations"] = list(skip_recs)
         c["inferred"]        = True
 
-    # Partial credit across AUTH + GOV (the only two dimensions that DON'T
-    # require a website to make sense at all).  Spec: "AUTH (partial),
-    # GOV (partial); CTX/INJ/PRIV/OUT/PUB → 0".  Each partial mark below
-    # is a baseline assumption — NOT evidence — so the status is WARN and
-    # the finding makes the assumption explicit.
-    #
-    # AUTH-XX awards a small partial only when the agent has at least
-    # declared a name.  Otherwise we have literally nothing to score.
+    # Only AUTH-01 receives partial credit — and only when the agent has
+    # declared a name.  That is the SOLE observable fact in limited-scan mode:
+    # the agent exists and has an identity.  Everything else requires a website.
+    # No baseline assumptions are awarded; "the agent name is known" is evidence,
+    # "the agent probably has logging" is fiction.
     if agent_name and agent_name.strip():
-        # Per-check partials, picked to land roughly in the user's
-        # "Limited Scan should display ~10-20/100" target without ever
-        # exceeding the 20-point cap enforced below.
-        # Tuned to land in the user's "~15-20/100" target range when all
-        # AUTH+GOV partials are credited (AUTH ≈10/15, GOV ≈7/10, total
-        # ≈17/116 ≈ 15%).  The 20-point cap below catches any future drift.
-        AUTH_PARTIALS = {
-            "AUTH-01": (2.5, f"Agent name declared: '{agent_name}'."),
-            "AUTH-02": (1.5, "API auth enforcement assumed at baseline; unverifiable without a site."),
-            "AUTH-03": (1.5, "Session binding assumed at baseline; unverifiable without a site."),
-            "AUTH-04": (2.5, "Multi-agent trust posture assumed at baseline."),
-            "AUTH-05": (2.0, "Identity-spoof resistance assumed at baseline; unverifiable without a site."),
-        }
-        GOV_PARTIALS = {
-            "GOV-01": (2.0, "Logging assumed at baseline; no public evidence."),
-            "GOV-02": (1.5, "Anomaly alerting assumed at baseline; no public evidence."),
-            "GOV-03": (1.0, "Tamper-evident storage assumed at baseline; no public evidence."),
-            "GOV-04": (1.5, "Incident response baseline assumed; no security.txt observed."),
-            "GOV-05": (1.0, "Regular assessment baseline assumed; no public evidence."),
-        }
-        partials = {**AUTH_PARTIALS, **GOV_PARTIALS}
         for c in controls:
-            mark = partials.get(c["ctrl"])
-            if not mark:
-                continue
-            score, finding = mark
-            c["score"]    = float(score)
-            c["status"]   = "warn"
-            c["finding"]  = finding
-            c["evidence"] = [
-                f"Limited-scan partial credit ({score}/{c['max']}).",
-                "No website signals — baseline assumption only.",
-            ]
+            if c["ctrl"] == "AUTH-01":
+                c["score"]    = 2.0          # 2 / 3 pts  (identity declared, not verifiable)
+                c["status"]   = "warn"
+                c["finding"]  = f"Agent identity declared: '{agent_name}'."
+                c["evidence"] = [
+                    f"agent_name='{agent_name}'",
+                    "Only observable signal in limited-scan mode.",
+                    "Full identity verification requires a public website.",
+                ]
+                break
 
     raw_total   = sum(c["score"] for c in controls)
     capped      = min(raw_total, LIMITED_SCAN_CAP)
@@ -1936,7 +1917,7 @@ def _build_limited_scan_result(
     # Replace the verdict with the limited-scan call-to-action.
     verdict = (
         "Scan limited — no website found. "
-        "Provide the agent's website URL for full analysis."
+        "Provide the agent's website URL for a full 38-check scan."
     )
 
     scan_ts = datetime.now(timezone.utc).isoformat()
@@ -1967,6 +1948,7 @@ def _build_limited_scan_result(
             "limited_scan":     True,
             "no_website":       True,
             "limited_reason":   reason,
+            "root_tried":       root_tried,   # root domain we auto-tried, if any
             "score_cap":        LIMITED_SCAN_CAP,
             "metadata": {
                 "target_url":       url,
@@ -1980,8 +1962,9 @@ def _build_limited_scan_result(
                 "pages_probed_count": 0,
                 "notes": [
                     "No dedicated agent website detected.",
-                    "Scoring is capped at 20/100 in limited-scan mode.",
-                    "Most dimensions cannot be assessed without a website to inspect.",
+                    f"Scoring is capped at {int(LIMITED_SCAN_CAP)}/100 in limited-scan mode.",
+                    "Only AUTH-01 receives partial credit (agent identity declared).",
+                    "Provide the agent's website URL for a full 38-check scan.",
                 ],
             },
         },
@@ -2044,23 +2027,61 @@ def analyze_agent(url: str, agent_name: str = "", scan_mode: str = "root") -> di
             original_url=original_url, reason="social-media-redirect",
         )
 
-    # Login-wall detection (ISSUE 2)
+    # Login-wall detection — auto-retry root, then fall back to limited scan.
+    # We NEVER return ok:false for a login wall; instead we degrade gracefully:
+    #   1. If the URL has a sub-path, try the root domain automatically.
+    #   2. If root also hits a login wall (or root == current URL), return a
+    #      limited-scan result that tells the user what we tried.
+    # This fixes the "bracky.app/home → error" bug: we now try bracky.app
+    # automatically and, if that also requires auth, return limited scan.
     if _is_login_wall(resp, soup):
-        suggestion = _suggest_alt_url(resp.url or url)
-        return {
-            "ok": False,
-            "error": (
-                "This URL requires authentication (login wall detected). "
-                "Try the public landing page instead — most security signals "
-                "live on marketing/policy pages, not behind login."
-            ),
-            "suggestion": suggestion,
-            "scanned_url": resp.url,
-            "status_code": resp.status_code,
-        }
+        current_url = resp.url or url
+        root_url = _suggest_alt_url(current_url)
+        root_tried: str | None = None
 
-    hdrs_lower = {k.lower(): v for k, v in resp.headers.items()}
-    final_url  = resp.url
+        if root_url and root_url != current_url:
+            # Attempt the root domain before giving up.
+            root_tried = root_url
+            root_resp, root_soup, root_warn = _fetch_website(root_url)
+            if (
+                root_resp is not None
+                and root_soup is not None
+                and not _is_login_wall(root_resp, root_soup)
+                and not _is_social_media_url(root_resp.url or "")
+            ):
+                # Root domain is publicly accessible — continue full scan
+                # with it as if that were the requested URL.
+                resp      = root_resp
+                soup      = root_soup
+                fetch_warn = root_warn or ""
+                url       = root_url
+                final_url = root_resp.url
+                # Skip the rest of the login-wall block and continue below.
+                # We use a local flag rather than restructuring the whole function.
+                _login_wall_fallback = False
+            else:
+                _login_wall_fallback = True
+        else:
+            _login_wall_fallback = True
+
+        if _login_wall_fallback:
+            return _build_limited_scan_result(
+                current_url,
+                agent_name,
+                original_url=original_url,
+                reason="login-wall",
+                root_tried=root_tried,
+            )
+
+        # If we reach here, root_resp is valid — fall through to the normal
+        # scan path with the reassigned resp/soup/url.
+        # Re-derive hdrs_lower from the new response.
+        hdrs_lower = {k.lower(): v for k, v in resp.headers.items()}
+        final_url  = resp.url
+    else:
+        # No login wall on the primary fetch.
+        hdrs_lower = {k.lower(): v for k, v in resp.headers.items()}
+        final_url  = resp.url
 
     # Build the extended corpus (security pages, security.txt, robots, sitemap,
     # bounty signals, framework signals).  Falls back gracefully if probes fail.
