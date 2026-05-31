@@ -108,10 +108,10 @@
       "tier": "COMPROMISED",
       "critical_fails": 6,
       "category": "DeFi",
-      "token": null,
+      "token": "$VIRTUAL",
       "base_mcp": true,
       "limited_scan": false,
-      "last_scan_date": "2026-05-29",
+      "last_scan_date": "2026-05-24",
       "previous_score": 1
     }
   ]
