@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,11 +38,13 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 PORT = int(os.environ.get("PORT", 8080))
 
-DASHBOARD_HTML = Path(__file__).parent / "acp-sec-dashboard.html"
-SCANNER_HTML   = Path(__file__).parent / "scanner.html"
-MONITOR_HTML   = Path(__file__).parent / "monitor_dashboard.html"
-STORE_FILE     = Path(__file__).parent / "score_store.json"
-SCAN_STORE     = Path(__file__).parent / "scan_store.json"
+DASHBOARD_HTML   = Path(__file__).parent / "acp-sec-dashboard.html"
+SCANNER_HTML     = Path(__file__).parent / "scanner.html"
+MONITOR_HTML     = Path(__file__).parent / "monitor_dashboard.html"
+LEADERBOARD_HTML = Path(__file__).parent / "leaderboard.html"
+STORE_FILE       = Path(__file__).parent / "score_store.json"
+SCAN_STORE       = Path(__file__).parent / "scan_store.json"
+LEADERBOARD_FILE = Path(__file__).parent / "leaderboard.json"
 
 # In-memory cache; populated from disk on startup
 _current_score: dict[str, Any] | None = None
@@ -237,6 +241,117 @@ def _get_scanner():
 
 
 # ---------------------------------------------------------------------------
+# Leaderboard storage
+# ---------------------------------------------------------------------------
+# leaderboard.json is committed to git with seed data.  On Railway's
+# ephemeral disk, runtime upserts persist only for the dyno's lifetime and
+# reset to the committed seed on redeploy — same trade-off as the monitor
+# SQLite store.  That's acceptable for a public demo leaderboard.
+
+# Six-band thresholds — mirrors acpsec.scorer.SCORE_BANDS (v0.3.1).  Local
+# copy so the leaderboard tier never depends on the older 5-band fallback
+# table above.
+_LEADERBOARD_BANDS = [
+    (90, "EXEMPLARY"),
+    (70, "SECURE"),
+    (50, "HARDENED"),
+    (30, "VULNERABLE"),
+    (10, "CRITICAL"),
+    (0,  "COMPROMISED"),
+]
+
+
+def _tier_for_score(score: float) -> str:
+    """Return the band name for a 0-100 score (six-band scheme)."""
+    for threshold, band in _LEADERBOARD_BANDS:
+        if score >= threshold:
+            return band
+    return "COMPROMISED"
+
+
+def _leaderboard_key(name: str) -> str:
+    """Stable id for an agent: lowercase, strip @, keep [a-z0-9_]."""
+    key = (name or "").strip().lstrip("@").lower()
+    return re.sub(r"[^a-z0-9_]", "", key.replace(" ", "_")) or "unknown"
+
+
+def _load_leaderboard() -> dict:
+    """Load leaderboard.json (seed + runtime upserts).  Never raises."""
+    try:
+        return json.loads(LEADERBOARD_FILE.read_text())
+    except (OSError, ValueError):
+        return {"updated": "", "checks_per_scan": 38, "agents": []}
+
+
+def _save_leaderboard(board: dict) -> None:
+    """Persist leaderboard.json (best-effort; ignores read-only FS)."""
+    try:
+        LEADERBOARD_FILE.write_text(json.dumps(board, indent=2))
+    except OSError:
+        pass
+
+
+def _upsert_leaderboard_entry(scan: dict) -> None:
+    """Add or update an agent in the leaderboard from a completed scan.
+
+    `scan` is the dashboard-wire-format data object returned by
+    scanner.analyze_agent().  Movement is derived by stashing the prior
+    score as previous_score before overwriting.
+    """
+    name = (scan.get("agent_name") or "").strip()
+    if not name:
+        return
+    key = _leaderboard_key(scan.get("x_username") or name)
+
+    score = scan.get("score_pct")
+    if score is None:
+        score = scan.get("final_score") or 0
+    score = round(float(score))
+
+    controls = scan.get("controls") or []
+    critical_fails = scan.get("critical_fails")
+    if critical_fails is None:
+        critical_fails = sum(
+            1 for c in controls
+            if str(c.get("severity", "")).upper() == "CRITICAL"
+            and str(c.get("status", "")).lower() == "fail"
+        )
+
+    board = _load_leaderboard()
+    agents = board.setdefault("agents", [])
+    existing = next((a for a in agents if a.get("id") == key), None)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if existing:
+        existing["previous_score"] = existing.get("score", score)
+        existing["score"]          = score
+        existing["tier"]           = _tier_for_score(score)
+        existing["critical_fails"] = int(critical_fails)
+        existing["limited_scan"]   = bool(scan.get("limited_scan", False))
+        existing["last_scan_date"] = today
+        if scan.get("x_username"):
+            existing["x_handle"] = scan["x_username"]
+    else:
+        agents.append({
+            "id":             key,
+            "name":           name,
+            "x_handle":       scan.get("x_username") or key,
+            "score":          score,
+            "tier":           _tier_for_score(score),
+            "critical_fails": int(critical_fails),
+            "category":       "general",
+            "token":          None,
+            "base_mcp":       False,
+            "limited_scan":   bool(scan.get("limited_scan", False)),
+            "last_scan_date": today,
+            "previous_score": score,   # first sighting → no movement
+        })
+
+    board["updated"] = today
+    _save_leaderboard(board)
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -254,6 +369,46 @@ def scanner_page():
 def monitor_page():
     """Serve the continuous-monitoring dashboard (watchlist + score history + alerts)."""
     return send_file(MONITOR_HTML)
+
+
+@app.get("/leaderboard")
+def leaderboard_page():
+    """Serve the public agent-security leaderboard."""
+    return send_file(LEADERBOARD_HTML)
+
+
+@app.get("/api/leaderboard")
+def get_leaderboard():
+    """Return the leaderboard sorted by score descending.
+
+    Each agent carries a derived `movement` field: 'up' | 'down' | 'same'
+    based on score vs previous_score.
+    """
+    board = _load_leaderboard()
+    agents = list(board.get("agents", []))
+
+    for a in agents:
+        prev = a.get("previous_score", a.get("score", 0))
+        cur  = a.get("score", 0)
+        if cur > prev:
+            a["movement"] = "up"
+        elif cur < prev:
+            a["movement"] = "down"
+        else:
+            a["movement"] = "same"
+        a["movement_delta"] = round(cur - prev)
+
+    agents.sort(key=lambda a: a.get("score", 0), reverse=True)
+    for i, a in enumerate(agents, 1):
+        a["rank"] = i
+
+    return jsonify({
+        "ok": True,
+        "updated": board.get("updated", ""),
+        "checks_per_scan": board.get("checks_per_scan", 38),
+        "count": len(agents),
+        "agents": agents,
+    }), 200
 
 
 @app.get("/api/health")
@@ -404,6 +559,12 @@ def scanner_scan():
     try:
         SCAN_STORE.write_text(json.dumps(result["data"], indent=2, default=str))
     except OSError:
+        pass
+
+    # Auto-add / update this agent on the public leaderboard (best-effort).
+    try:
+        _upsert_leaderboard_entry(result["data"])
+    except Exception:  # noqa: BLE001 — leaderboard must never break a scan
         pass
 
     return jsonify(result), 200

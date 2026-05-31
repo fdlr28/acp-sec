@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Security Leaderboard — ACP-SEC</title>
+  <!-- Favicon -->
+  <link rel="icon" type="image/jpeg" href="/static/logo.jpg?v=3">
+  <link rel="apple-touch-icon" href="/static/logo.jpg?v=3">
+  <!-- Meta -->
+  <meta name="description" content="ACP-SEC — First open-source security standard for AI agent commerce">
+  <meta property="og:title" content="ACP-SEC — Agent Security Leaderboard">
+  <meta property="og:description" content="Live ranking of AI agents by security posture. Free, open source.">
+  <meta property="og:url" content="https://acpsec.up.railway.app/leaderboard">
+  <meta name="theme-color" content="#0052FF">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* Light-mode palette per v0.3.1 spec. Applied when body.light-mode set. */
+    :root {
+      --bg-primary:    #FFFFFF;
+      --bg-secondary:  #F5F5F5;
+      --bg-tertiary:   #EBEBEB;
+      --text-primary:  #0A0B0D;
+      --text-secondary:#4A4A4A;
+      --text-tertiary: #9CA3AF;
+      --border:        #E0E0E0;
+      --border-light:  #F3F4F6;
+      --accent-base:   #0052FF;
+      --accent-success:#00C087;
+    }
+    /* Dark is the default — applied whenever .light-mode is absent. */
+    body:not(.light-mode) {
+      --bg-primary:    #0A0B0D;
+      --bg-secondary:  #1C1D1F;
+      --bg-tertiary:   #2A2B2E;
+      --text-primary:  #FFFFFF;
+      --text-secondary:#8A919E;
+      --text-tertiary: #6B7280;
+      --border:        #2A2B2E;
+      --border-light:  #1C1D1F;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      transition: background-color .3s, color .3s;
+    }
+
+    /* ── Tier band colours (v0.3.1 six-band palette) ───────────────────────── */
+    /* Kept in lock-step with acpsec/scorer.py SCORE_BANDS + scanner BAND_COLORS */
+    .tier-EXEMPLARY   { --tier:#0052FF; }
+    .tier-SECURE      { --tier:#00C087; }
+    .tier-HARDENED    { --tier:#F0C000; }
+    .tier-VULNERABLE  { --tier:#F5A623; }
+    .tier-CRITICAL    { --tier:#FF6B00; }
+    .tier-COMPROMISED { --tier:#FF4444; }
+
+    /* ── Shared navbar ─────────────────────────────────────────────────────── */
+    .acpsec-nav{
+      display:flex;align-items:center;gap:4px;
+      height:48px;padding:0 20px;
+      background:#0A0B0D;
+      border-bottom:1px solid #1C1D1F;
+      font:13px/1 'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    }
+    .acpsec-nav__brand{
+      display:inline-flex;align-items:center;gap:6px;
+      margin-right:16px;font-weight:700;
+      color:#0052FF;text-decoration:none;letter-spacing:-.01em;
+      font-size:14px;
+    }
+    .acpsec-nav__links{display:flex;gap:2px;flex:1;}
+    .acpsec-nav__link{
+      display:inline-flex;align-items:center;gap:6px;
+      padding:7px 12px;border-radius:6px;text-decoration:none;
+      color:#8A919E;font-weight:500;
+      transition:background .15s,color .15s;
+    }
+    .acpsec-nav__link:hover{background:rgba(255,255,255,.06);color:#fff;}
+    .acpsec-nav__link[aria-current="page"]{color:#0052FF;background:transparent;}
+    .acpsec-nav__link[aria-current="page"]:hover{color:#0052FF;background:rgba(0,82,255,.08);}
+    @media (max-width:540px){
+      .acpsec-nav{padding:0 12px;}
+      .acpsec-nav__link span:not(.acpsec-nav__icon){display:none;}
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────────── */
+    header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .header-title h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -.02em;
+    }
+    .header-title h1 span {
+      background: linear-gradient(135deg,#0052FF,#00C087);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .header-title p {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 0.2rem;
+    }
+    .btn {
+      padding: 0.5rem 1.1rem;
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: var(--bg-tertiary); }
+
+    /* ── Layout ────────────────────────────────────────────────────────────── */
+    .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+
+    /* ── Stats bar ─────────────────────────────────────────────────────────── */
+    .stats-bar {
+      display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+      padding: 0.8rem 1.2rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-bottom: 1.25rem;
+    }
+    .stats-bar strong { color: var(--text-primary); font-weight: 700; }
+    .stats-bar .dot { color: var(--text-tertiary); }
+
+    /* ── Filter tabs ───────────────────────────────────────────────────────── */
+    .filter-tabs {
+      display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1.25rem;
+    }
+    .filter-tab {
+      padding: 0.45rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .filter-tab:hover { color: var(--text-primary); border-color: var(--accent-base); }
+    .filter-tab.active {
+      background: var(--accent-base);
+      color: #fff;
+      border-color: var(--accent-base);
+    }
+
+    /* ── Table ─────────────────────────────────────────────────────────────── */
+    .board-wrap {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      text-align: left;
+      padding: 0.85rem 1rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-tertiary);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-primary);
+    }
+    tbody td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--border-light);
+      font-size: 0.9rem;
+      vertical-align: middle;
+    }
+    tbody tr {
+      cursor: pointer;
+      transition: background .12s;
+    }
+    tbody tr:hover { background: var(--bg-tertiary); }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .col-rank   { width: 56px; text-align: center; font-weight: 700; color: var(--text-secondary); }
+    .col-move   { width: 48px; text-align: center; font-size: 1rem; }
+    .col-score  { width: 120px; }
+    .col-tier   { width: 150px; }
+    .col-crit   { width: 110px; text-align: center; }
+
+    .rank-medal { font-size: 1.05rem; }
+
+    .move-up   { color: var(--accent-success); }
+    .move-down { color: #FF4444; }
+    .move-same { color: var(--text-tertiary); }
+
+    /* Agent cell */
+    .agent-cell { display: flex; align-items: center; gap: 0.7rem; }
+    .agent-avatar {
+      width: 34px; height: 34px; border-radius: 8px;
+      object-fit: cover; flex-shrink: 0;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+    }
+    .agent-name { font-weight: 600; color: var(--text-primary); }
+    .agent-handle { font-size: 0.72rem; color: var(--text-tertiary); }
+    .agent-token {
+      display: inline-block; margin-left: 0.4rem;
+      font-size: 0.66rem; font-weight: 700;
+      padding: 0.1rem 0.45rem; border-radius: 6px;
+      background: rgba(0,82,255,.12); color: var(--accent-base);
+      vertical-align: middle;
+    }
+    .agent-flags { display:flex; gap:0.3rem; margin-top:0.15rem; flex-wrap:wrap; }
+    .flag {
+      font-size: 0.62rem; font-weight: 700; letter-spacing: .03em;
+      padding: 0.08rem 0.4rem; border-radius: 5px;
+      text-transform: uppercase;
+    }
+    .flag-mcp     { background: rgba(0,82,255,.12); color: var(--accent-base); }
+    .flag-limited { background: rgba(245,166,35,.15); color: #B57100; }
+
+    /* Score */
+    .score-num {
+      font-weight: 800; font-size: 1.15rem; color: var(--tier, var(--text-primary));
+    }
+    .score-denom { font-size: 0.75rem; color: var(--text-tertiary); font-weight: 500; }
+    .score-bar {
+      margin-top: 0.3rem; height: 5px; width: 90px;
+      background: var(--bg-tertiary); border-radius: 99px; overflow: hidden;
+    }
+    .score-bar-fill { height: 100%; border-radius: 99px; background: var(--tier, var(--accent-base)); }
+
+    /* Tier pill */
+    .tier-pill {
+      display: inline-block;
+      padding: 0.28rem 0.7rem;
+      border-radius: 9999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: var(--tier);
+      background: color-mix(in srgb, var(--tier) 15%, transparent);
+      border: 1px solid color-mix(in srgb, var(--tier) 35%, transparent);
+    }
+
+    .crit-badge {
+      display: inline-block;
+      min-width: 26px;
+      padding: 0.2rem 0.55rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .crit-zero { background: rgba(0,192,135,.15); color: var(--accent-success); }
+    .crit-some { background: rgba(255,68,68,.15);  color: #FF4444; }
+
+    .empty-row td {
+      text-align: center; color: var(--text-tertiary);
+      padding: 2.5rem 1rem; font-size: 0.9rem;
+    }
+
+    footer {
+      text-align: center; padding: 1.5rem 2rem;
+      color: var(--text-secondary); font-size: 0.8rem;
+      border-top: 1px solid var(--border); margin-top: 2rem;
+    }
+    footer a { color: var(--accent-base); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 640px) {
+      .col-crit, .agent-handle { display: none; }
+      .container { padding: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="acpsec-nav" role="navigation" aria-label="Primary">
+  <a href="/" class="acpsec-nav__brand"><img src="/static/logo.jpg?v=3" style="height:28px;width:28px;border-radius:6px;object-fit:cover;margin-right:8px;" alt="ACP-SEC Logo"><span>ACP-SEC</span></a>
+  <div class="acpsec-nav__links">
+    <a href="/"            class="acpsec-nav__link"><span class="acpsec-nav__icon">🏠</span><span>Dashboard</span></a>
+    <a href="/leaderboard" class="acpsec-nav__link" aria-current="page"><span class="acpsec-nav__icon">🏆</span><span>Leaderboard</span></a>
+    <a href="/scanner"     class="acpsec-nav__link"><span class="acpsec-nav__icon">🔍</span><span>Scanner</span></a>
+    <a href="/monitor"     class="acpsec-nav__link"><span class="acpsec-nav__icon">📊</span><span>Monitor</span></a>
+  </div>
+</nav>
+
+<header>
+  <div class="header-title">
+    <h1>Agent Security <span>Leaderboard</span></h1>
+    <p>Live ranking of AI agents by ACP-SEC score</p>
+  </div>
+  <button class="btn" onclick="toggleDark()" id="darkToggle">🌙 Dark</button>
+</header>
+
+<div class="container">
+
+  <!-- Stats bar -->
+  <div class="stats-bar" id="statsBar">
+    <strong id="statAgents">—</strong> agents scanned
+    <span class="dot">·</span>
+    <strong id="statChecks">38</strong> checks each
+    <span class="dot">·</span>
+    last updated <strong id="statUpdated">—</strong>
+  </div>
+
+  <!-- Filter tabs -->
+  <div class="filter-tabs" id="filterTabs">
+    <button class="filter-tab active" data-filter="all">All</button>
+    <button class="filter-tab" data-filter="defi">DeFi</button>
+    <button class="filter-tab" data-filter="trading">Trading</button>
+    <button class="filter-tab" data-filter="basemcp">Base MCP</button>
+    <button class="filter-tab" data-filter="token">Has Token</button>
+  </div>
+
+  <!-- Table -->
+  <div class="board-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="col-rank">#</th>
+          <th class="col-move"></th>
+          <th>Agent</th>
+          <th class="col-score">Score</th>
+          <th class="col-tier">Tier</th>
+          <th class="col-crit">Critical Fails</th>
+        </tr>
+      </thead>
+      <tbody id="boardBody">
+        <tr class="empty-row"><td colspan="6">Loading leaderboard…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  <p>ACP-SEC — Built by <a href="https://x.com/apsecagent" target="_blank" rel="noopener">@apsecagent</a></p>
+</footer>
+
+<script>
+'use strict';
+
+// ── Theme (shared key across all pages) ────────────────────────────────────
+const THEME_KEY = 'acpsec_theme';
+function toggleDark() {
+  const isLight = document.body.classList.toggle('light-mode');
+  localStorage.setItem(THEME_KEY, isLight ? 'light' : 'dark');
+  document.getElementById('darkToggle').textContent = isLight ? '🌙 Dark' : '☀️ Light';
+}
+(() => {
+  const isLight = localStorage.getItem(THEME_KEY) === 'light';
+  if (isLight) document.body.classList.add('light-mode');
+  document.getElementById('darkToggle').textContent = isLight ? '🌙 Dark' : '☀️ Light';
+})();
+
+// ── State ───────────────────────────────────────────────────────────────────
+let _agents = [];
+let _filter = 'all';
+
+// Cross-page handoff keys — same as the dashboard reads on load.
+const LAST_SCAN_KEY      = 'acpsec_last_scan';
+const LAST_SCAN_TIME_KEY = 'acpsec_last_scan_time';
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function _avatarUrl(handle) {
+  const h = (handle || '').replace(/^@/, '').trim();
+  if (!h) return '/static/logo.jpg?v=3';
+  return `https://unavatar.io/twitter/${encodeURIComponent(h)}?fallback=false`;
+}
+
+function _rankCell(rank) {
+  const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '';
+  return medal ? `<span class="rank-medal">${medal}</span>` : rank;
+}
+
+function _moveCell(a) {
+  if (a.movement === 'up')   return `<span class="move-up" title="+${a.movement_delta}">▲</span>`;
+  if (a.movement === 'down') return `<span class="move-down" title="${a.movement_delta}">▼</span>`;
+  return `<span class="move-same" title="no change">−</span>`;
+}
+
+function _matchesFilter(a) {
+  switch (_filter) {
+    case 'all':     return true;
+    case 'defi':    return (a.category || '').toLowerCase() === 'defi';
+    case 'trading': return (a.category || '').toLowerCase() === 'trading';
+    case 'basemcp': return !!a.base_mcp;
+    case 'token':   return !!a.token;
+    default:        return true;
+  }
+}
+
+function _render() {
+  const body = document.getElementById('boardBody');
+  const rows = _agents.filter(_matchesFilter);
+
+  if (!rows.length) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">No agents in this category yet.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map(a => {
+    const tierClass = `tier-${a.tier}`;
+    const critClass = a.critical_fails > 0 ? 'crit-some' : 'crit-zero';
+    const tokenTag  = a.token ? `<span class="agent-token">${a.token}</span>` : '';
+    const flags = [];
+    if (a.base_mcp)     flags.push('<span class="flag flag-mcp">⚡ Base MCP</span>');
+    if (a.limited_scan) flags.push('<span class="flag flag-limited">Limited</span>');
+    const flagsHtml = flags.length ? `<div class="agent-flags">${flags.join('')}</div>` : '';
+
+    return `
+      <tr class="${tierClass}" onclick='loadAgent(${JSON.stringify(a)})'>
+        <td class="col-rank">${_rankCell(a.rank)}</td>
+        <td class="col-move">${_moveCell(a)}</td>
+        <td>
+          <div class="agent-cell">
+            <img class="agent-avatar" src="${_avatarUrl(a.x_handle)}"
+                 onerror="this.src='/static/logo.jpg?v=3'" alt="">
+            <div>
+              <div><span class="agent-name">${a.name}</span>${tokenTag}</div>
+              <div class="agent-handle">@${(a.x_handle || a.id)}</div>
+              ${flagsHtml}
+            </div>
+          </div>
+        </td>
+        <td class="col-score">
+          <span class="score-num">${a.score}</span><span class="score-denom">/100</span>
+          <div class="score-bar"><div class="score-bar-fill" style="width:${Math.max(2, a.score)}%"></div></div>
+        </td>
+        <td class="col-tier"><span class="tier-pill">${a.tier}</span></td>
+        <td class="col-crit"><span class="crit-badge ${critClass}">${a.critical_fails}</span></td>
+      </tr>`;
+  }).join('');
+}
+
+// Clicking a row hands a minimal report to the dashboard via localStorage,
+// then navigates to /.  The dashboard's tryAutoLoad() reads these keys and
+// renders the hero (score + band + agent name).  Full control-by-control
+// detail is only available for live scans run from the Scanner page.
+function loadAgent(a) {
+  const report = {
+    agent_name:        a.name,
+    agent_version:     '',
+    band:              a.tier,
+    verdict:           `Leaderboard snapshot — last scanned ${a.last_scan_date}.`,
+    final_score:       a.score,
+    score_pct:         a.score,
+    critical_fails:    a.critical_fails,
+    controls:          [],
+    source:            'leaderboard',
+    scan_url:          '',
+    x_username:        a.x_handle || '',
+    x_handle_verified: false,
+    limited_scan:      !!a.limited_scan,
+  };
+  try {
+    localStorage.setItem(LAST_SCAN_KEY, JSON.stringify(report));
+    localStorage.setItem(LAST_SCAN_TIME_KEY, String(Date.now()));
+  } catch (_) { /* ignore quota / private mode */ }
+  window.location.href = '/';
+}
+
+// Filter tab clicks
+document.getElementById('filterTabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('.filter-tab');
+  if (!tab) return;
+  document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  _filter = tab.dataset.filter;
+  _render();
+});
+
+// ── Load ────────────────────────────────────────────────────────────────────
+async function loadLeaderboard() {
+  try {
+    const res  = await fetch('/api/leaderboard', { signal: AbortSignal.timeout(5000) });
+    const json = await res.json();
+    if (!json.ok) throw new Error('bad response');
+    _agents = json.agents || [];
+    document.getElementById('statAgents').textContent  = json.count ?? _agents.length;
+    document.getElementById('statChecks').textContent  = json.checks_per_scan ?? 38;
+    document.getElementById('statUpdated').textContent = json.updated || '—';
+    _render();
+  } catch (err) {
+    document.getElementById('boardBody').innerHTML =
+      `<tr class="empty-row"><td colspan="6">Could not load leaderboard — is serve.py running?</td></tr>`;
+  }
+}
+
+loadLeaderboard();
+</script>
+</body>
+</html>
